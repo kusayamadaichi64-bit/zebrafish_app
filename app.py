@@ -249,390 +249,466 @@ with st.sidebar:
     st.caption(date.today().strftime("%Y年 %m月 %d日"))
 
 
-# --- 統一デザインシステム CSS ---
-BASE_CSS = """
+# --- デザインシステム CSS（Liquid Glass） ---
+# 文字化け対策: ネイティブ日本語フォントを最優先に置く（Web font が落ちても安全）
+JP_FONT_STACK = ("-apple-system, BlinkMacSystemFont, "
+                 "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', "
+                 "'Yu Gothic UI', YuGothic, 'Meiryo', "
+                 "'Noto Sans JP', 'Zen Kaku Gothic New', "
+                 "system-ui, sans-serif")
+JP_HEAD_STACK = ("-apple-system, BlinkMacSystemFont, "
+                 "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', "
+                 "'Yu Gothic UI', YuGothic, 'Meiryo', "
+                 "'Zen Maru Gothic', 'Noto Sans JP', "
+                 "system-ui, sans-serif")
+
+BASE_CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700&family=Cormorant+Garamond:wght@500;700&display=swap');
+/* @import は preconnect でブロックされにくくする */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700&display=swap');
 
-:root {
-  --bg: #FAF6EE;
-  --bg-soft: #F5EFE0;
-  --surface: #FFFFFF;
-  --surface-alt: #FDFAF3;
-  --primary: #2D5F3F;
-  --primary-dark: #234A31;
+:root {{
+  --text: #1A1612;
+  --text-soft: #5C5048;
+  --text-mute: #8A7E70;
+  --primary: #1E5538;
+  --primary-mid: #2D5F3F;
   --primary-soft: #5C8D5A;
-  --primary-light: #B8DDB6;
-  --accent: #C97B4F;
-  --accent-soft: #F5D7A1;
+  --accent: #D88751;
   --danger: #B94A3A;
-  --danger-soft: #E8B4A8;
-  --text: #1F1A14;
-  --text-soft: #6B5D4F;
-  --text-mute: #9C8E7C;
-  --border: #EFE5D2;
-  --border-soft: #F5EFE0;
-  --shadow-sm: 0 1px 3px rgba(95, 75, 50, 0.06);
-  --shadow: 0 2px 12px rgba(95, 75, 50, 0.08);
-  --shadow-lg: 0 8px 32px rgba(95, 75, 50, 0.12);
-}
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-strong: rgba(255, 255, 255, 0.78);
+  --glass-bg-soft: rgba(255, 255, 255, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-shadow: 0 8px 32px rgba(75, 65, 50, 0.10);
+  --glass-shadow-lg: 0 18px 48px rgba(75, 65, 50, 0.14);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}}
 
-/* グローバル */
-html, body, [class*="css"], [class*="st-"] {
-  font-family: 'Zen Kaku Gothic New', -apple-system, BlinkMacSystemFont, sans-serif !important;
+/* === グローバル：日本語フォント最優先 === */
+html, body, .stApp, [class*="css"], [class*="st-"], [data-testid] {{
+  font-family: {JP_FONT_STACK} !important;
   color: var(--text);
-}
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}}
 
-.stApp {
-  background:
-    radial-gradient(ellipse at top left, rgba(184, 221, 182, 0.18), transparent 50%),
-    radial-gradient(ellipse at top right, rgba(245, 215, 161, 0.20), transparent 50%),
-    var(--bg);
-}
-
-h1, h2, h3, h4 {
-  font-family: 'Zen Maru Gothic', sans-serif !important;
+h1, h2, h3, h4, h5,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 {{
+  font-family: {JP_HEAD_STACK} !important;
   color: var(--text) !important;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em !important;
   font-weight: 700 !important;
-}
+}}
+h2 {{ font-size: 22px !important; margin-top: 0.5rem !important; }}
+h3 {{ font-size: 18px !important; }}
+h4 {{ font-size: 15px !important; }}
 
-h2 { font-size: 22px !important; margin-top: 0.5rem !important; }
-h3 { font-size: 18px !important; }
-h4 { font-size: 15px !important; }
+/* === 背景：複数の彩色ブロブ（ガラスが透けて見える土台） === */
+.stApp {{
+  background:
+    radial-gradient(circle at  8% 12%, rgba(255, 192, 152, 0.55), transparent 30%),
+    radial-gradient(circle at 92% 16%, rgba(150, 220, 180, 0.50), transparent 32%),
+    radial-gradient(circle at 18% 90%, rgba(255, 220, 150, 0.45), transparent 32%),
+    radial-gradient(circle at 85% 85%, rgba(180, 200, 240, 0.45), transparent 32%),
+    radial-gradient(circle at 50% 50%, rgba(255, 215, 195, 0.18), transparent 55%),
+    linear-gradient(180deg, #F8F4E8 0%, #F2EDE0 100%);
+  background-attachment: fixed;
+}}
 
-/* メインコンテナの余白 */
-.main .block-container {
+.main .block-container {{
   padding-top: 1.5rem !important;
-  padding-bottom: 3rem !important;
+  padding-bottom: 4rem !important;
   max-width: 1400px;
-}
+}}
 
-/* タブ */
-.stTabs [data-baseweb="tab-list"] {
-  gap: 2px;
-  background: var(--surface);
-  padding: 6px;
-  border-radius: 16px;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--border-soft);
+/* === タブ：浮遊ガラスピルバー === */
+.stTabs [data-baseweb="tab-list"] {{
+  gap: 4px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  padding: 8px;
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
   flex-wrap: wrap;
-}
+}}
 
-.stTabs [data-baseweb="tab"] {
+.stTabs [data-baseweb="tab"] {{
   background: transparent;
-  border-radius: 11px !important;
+  border-radius: 14px !important;
   padding: 9px 18px !important;
   color: var(--text-soft) !important;
   font-weight: 500 !important;
   font-size: 14px !important;
-  transition: all 0.18s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   border: none !important;
-}
-
-.stTabs [data-baseweb="tab"]:hover {
-  background: rgba(45, 95, 63, 0.06);
+}}
+.stTabs [data-baseweb="tab"]:hover {{
+  background: rgba(255, 255, 255, 0.55);
   color: var(--primary) !important;
-}
-
-.stTabs [aria-selected="true"] {
-  background: var(--primary) !important;
+}}
+.stTabs [aria-selected="true"] {{
+  background: linear-gradient(135deg, rgba(45, 95, 63, 0.95), rgba(30, 80, 50, 0.95)) !important;
   color: white !important;
-  box-shadow: 0 2px 8px rgba(45, 95, 63, 0.25);
-}
+  box-shadow: 0 4px 16px rgba(45, 95, 63, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.20);
+}}
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{ display: none !important; }}
 
-.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {
-  display: none !important;
-}
-
-/* ボタン */
-.stButton > button, .stDownloadButton > button {
-  border-radius: 12px !important;
-  padding: 9px 20px !important;
+/* === ボタン：ガラスピル === */
+.stButton > button, .stDownloadButton > button {{
+  background: var(--glass-bg-strong) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 999px !important;
+  padding: 10px 22px !important;
   font-weight: 500 !important;
-  border: 1px solid var(--border) !important;
-  background: var(--surface) !important;
   color: var(--text) !important;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.18s ease;
-}
-
-.stButton > button:hover, .stDownloadButton > button:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow);
-  border-color: var(--primary-soft) !important;
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}}
+.stButton > button:hover, .stDownloadButton > button:hover {{
+  transform: translateY(-2px) scale(1.01);
+  background: rgba(255, 255, 255, 0.92) !important;
   color: var(--primary) !important;
-}
-
-.stButton > button[kind="primary"] {
-  background: var(--primary) !important;
+  box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
+}}
+.stButton > button[kind="primary"] {{
+  background: linear-gradient(135deg, rgba(45, 95, 63, 0.96), rgba(30, 75, 50, 0.96)) !important;
   color: white !important;
-  border-color: var(--primary) !important;
-  box-shadow: 0 2px 10px rgba(45, 95, 63, 0.25);
-}
-
-.stButton > button[kind="primary"]:hover {
-  background: var(--primary-dark) !important;
+  border: 1px solid rgba(45, 95, 63, 0.6) !important;
+  box-shadow: 0 6px 20px rgba(45, 95, 63, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}}
+.stButton > button[kind="primary"]:hover {{
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 14px 36px rgba(45, 95, 63, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.28);
   color: white !important;
-  box-shadow: 0 6px 20px rgba(45, 95, 63, 0.30);
-}
+}}
 
-/* メトリクスカード */
-[data-testid="stMetric"] {
-  background: var(--surface);
-  padding: 18px 22px !important;
-  border-radius: 16px !important;
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
-}
-
-[data-testid="stMetric"]:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-
-[data-testid="stMetricLabel"] {
+/* === メトリクスカード：ガラス === */
+[data-testid="stMetric"] {{
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  padding: 20px 24px !important;
+  border-radius: 22px !important;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}}
+[data-testid="stMetric"]:hover {{
+  transform: translateY(-3px);
+  background: var(--glass-bg-strong);
+  box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
+}}
+[data-testid="stMetricLabel"] {{
   color: var(--text-mute) !important;
   font-size: 11px !important;
-  letter-spacing: 0.12em !important;
+  letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
   font-weight: 600 !important;
-}
-
-[data-testid="stMetricValue"] {
+  font-family: {JP_FONT_STACK} !important;
+}}
+[data-testid="stMetricValue"] {{
   color: var(--text) !important;
   font-weight: 700 !important;
-  font-family: 'Zen Maru Gothic', sans-serif !important;
-  font-size: 28px !important;
-  line-height: 1.2 !important;
-}
+  font-family: {JP_HEAD_STACK} !important;
+  font-size: 30px !important;
+  line-height: 1.1 !important;
+  letter-spacing: -0.02em !important;
+}}
+[data-testid="stMetricDelta"] {{ color: var(--text-soft) !important; }}
 
-[data-testid="stMetricDelta"] {
-  color: var(--text-soft) !important;
-}
-
-/* フォーム入力 */
-.stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  padding: 9px 13px !important;
+/* === 入力フィールド：ガラス === */
+.stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input {{
+  background: rgba(255, 255, 255, 0.62) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 14px !important;
+  padding: 10px 14px !important;
   color: var(--text) !important;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus, .stDateInput input:focus {
-  border-color: var(--primary-soft) !important;
-  box-shadow: 0 0 0 3px rgba(92, 141, 90, 0.12) !important;
+  font-family: {JP_FONT_STACK} !important;
+  transition: all 0.2s ease;
+}}
+.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus, .stDateInput input:focus {{
+  border-color: rgba(45, 95, 63, 0.5) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 0 0 4px rgba(45, 95, 63, 0.14) !important;
   outline: none !important;
-}
+}}
+.stSelectbox > div > div, .stMultiSelect > div > div {{
+  background: rgba(255, 255, 255, 0.62) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 14px !important;
+}}
 
-.stSelectbox > div > div {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-}
-
-/* ラベル */
+/* === ラベル === */
 .stTextInput label, .stTextArea label, .stNumberInput label, .stDateInput label,
-.stSelectbox label, .stMultiSelect label, .stRadio label, .stCheckbox label {
+.stSelectbox label, .stMultiSelect label, .stRadio label, .stCheckbox label,
+.stFileUploader label {{
   color: var(--text-soft) !important;
   font-weight: 500 !important;
   font-size: 13px !important;
-}
+  font-family: {JP_FONT_STACK} !important;
+}}
 
-/* データテーブル */
-[data-testid="stDataFrame"] {
-  border-radius: 14px;
+/* === データフレーム：ガラス枠 === */
+[data-testid="stDataFrame"] {{
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 18px;
   overflow: hidden;
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-sm);
-}
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}}
 
-/* アラート */
-.stAlert {
-  border-radius: 14px !important;
-  border: none !important;
+/* === アラート === */
+.stAlert, div[data-baseweb="notification"] {{
+  background: var(--glass-bg-strong) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 16px !important;
+  border: 1px solid var(--glass-border) !important;
   padding: 14px 18px !important;
-  box-shadow: var(--shadow-sm);
-}
+  box-shadow: var(--glass-shadow);
+}}
 
-div[data-baseweb="notification"] {
-  border-radius: 14px !important;
-}
-
-/* 区切り線 */
-hr {
+/* === 区切り線 === */
+hr {{
   border: none !important;
   height: 1px !important;
-  background: linear-gradient(90deg, transparent, var(--border), transparent) !important;
-  margin: 28px 0 !important;
-}
+  background: linear-gradient(90deg, transparent, rgba(140, 120, 100, 0.20), transparent) !important;
+  margin: 32px 0 !important;
+}}
 
-/* expander */
-[data-testid="stExpander"] {
-  background: var(--surface);
-  border: 1px solid var(--border-soft) !important;
-  border-radius: 14px !important;
-  box-shadow: var(--shadow-sm);
+/* === expander：ガラス === */
+[data-testid="stExpander"] {{
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 18px !important;
+  box-shadow: var(--glass-shadow);
   overflow: hidden;
-}
-
-[data-testid="stExpander"] summary {
-  padding: 12px 18px !important;
+}}
+[data-testid="stExpander"] summary {{
+  padding: 14px 18px !important;
   font-weight: 500 !important;
-}
+}}
 
-/* progress */
-.stProgress > div > div > div {
-  background: linear-gradient(90deg, var(--primary-soft), var(--primary)) !important;
-  border-radius: 8px !important;
-}
+/* === プログレス === */
+.stProgress > div > div > div {{
+  background: linear-gradient(90deg, #5C8D5A, #2D5F3F, #1E5538) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(45, 95, 63, 0.28);
+}}
+.stProgress > div > div {{
+  background-color: rgba(255, 255, 255, 0.50) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}}
 
-.stProgress > div > div {
-  background-color: var(--border-soft) !important;
-  border-radius: 8px !important;
-}
-
-/* サイドバー */
-[data-testid="stSidebar"] {
-  background: var(--surface);
-  border-right: 1px solid var(--border-soft);
-}
-
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+/* === サイドバー：ガラスパネル === */
+[data-testid="stSidebar"] {{
+  background: var(--glass-bg) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-right: 1px solid var(--glass-border);
+}}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
   color: var(--text-soft);
-}
+}}
 
-/* ヒーローカード */
-.zf-hero {
-  background:
-    radial-gradient(circle at 90% 20%, rgba(201, 123, 79, 0.20), transparent 40%),
-    linear-gradient(135deg, #2D5F3F 0%, #5C8D5A 100%);
-  border-radius: 24px;
-  padding: 28px 36px;
-  color: white;
-  box-shadow: 0 10px 40px rgba(45, 95, 63, 0.18);
-  margin: 0 0 28px 0;
+/* === ヒーロー：シグネチャー・ガラスシャード === */
+.zf-hero {{
   position: relative;
+  background:
+    radial-gradient(circle at 88% 22%, rgba(255, 200, 130, 0.42), transparent 38%),
+    radial-gradient(circle at  8% 78%, rgba(150, 220, 200, 0.38), transparent 38%),
+    linear-gradient(135deg, rgba(45, 95, 63, 0.94), rgba(28, 70, 45, 0.94));
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  border-radius: 28px;
+  padding: 32px 40px;
+  color: white;
+  box-shadow:
+    0 20px 60px rgba(45, 95, 63, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  margin: 0 0 32px 0;
   overflow: hidden;
-}
-
-.zf-hero::before {
+}}
+.zf-hero::before {{
   content: '🐟';
   position: absolute;
-  font-size: 180px;
-  right: -20px;
-  bottom: -50px;
-  opacity: 0.10;
-  transform: rotate(-12deg);
-}
-
-.zf-hero .eyebrow {
+  font-size: 200px;
+  right: -25px;
+  bottom: -60px;
+  opacity: 0.13;
+  transform: rotate(-15deg);
+}}
+.zf-hero::after {{
+  content: '';
+  position: absolute;
+  top: -50%; left: -20%;
+  width: 60%; height: 200%;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.08) 50%, transparent 70%);
+  transform: rotate(15deg);
+  pointer-events: none;
+}}
+.zf-hero .eyebrow {{
   font-size: 11px;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.75);
   font-weight: 600;
-  margin: 0 0 6px 0;
-}
-
-.zf-hero h1 {
+  margin: 0 0 8px 0;
+  position: relative; z-index: 2;
+}}
+.zf-hero h1 {{
   color: white !important;
   margin: 0 !important;
-  font-size: 32px !important;
-  font-family: 'Zen Maru Gothic', sans-serif !important;
-  letter-spacing: 0.01em;
-}
-
-.zf-hero .sub {
-  color: rgba(255, 255, 255, 0.85);
-  margin: 6px 0 0 0;
+  font-size: 34px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+  font-family: {JP_HEAD_STACK} !important;
+  position: relative; z-index: 2;
+}}
+.zf-hero .sub {{
+  color: rgba(255, 255, 255, 0.88);
+  margin: 8px 0 0 0;
   font-size: 14px;
-}
+  position: relative; z-index: 2;
+}}
 
-/* 区切りラベル */
-.zf-section-label {
-  font-size: 11px;
-  letter-spacing: 0.18em;
+/* === セクションラベル === */
+.zf-section-label {{
+  font-size: 10px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--text-mute);
-  font-weight: 600;
-  margin: 8px 0 12px 0;
-}
+  font-weight: 700;
+  margin: 8px 0 14px 0;
+}}
 
-/* インラインピル */
-.zf-pill {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
+/* === 餌やりステータス === */
+.feed-ok    {{ color: #2D5F3F; font-weight: 600; }}
+.feed-warn  {{ color: #C48A2A; font-weight: 600; }}
+.feed-alert {{ color: #B94A3A; font-weight: 700; }}
+
+/* === マルチセレクト・ピル === */
+[data-baseweb="tag"] {{
+  background: rgba(45, 95, 63, 0.14) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(45, 95, 63, 0.22) !important;
+  border-radius: 999px !important;
+  color: var(--primary) !important;
   font-weight: 500;
-  background: var(--border-soft);
-  color: var(--text-soft);
-}
+}}
 
-/* 餌やりステータスのテキスト */
-.feed-ok    { color: var(--primary-soft); font-weight: 600; }
-.feed-warn  { color: var(--accent);       font-weight: 600; }
-.feed-alert { color: var(--danger);       font-weight: 700; }
+/* === ファイルアップロード === */
+[data-testid="stFileUploadDropzone"] {{
+  background: var(--glass-bg) !important;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 2px dashed rgba(140, 120, 100, 0.40) !important;
+  border-radius: 18px !important;
+  transition: all 0.2s;
+}}
+[data-testid="stFileUploadDropzone"]:hover {{
+  background: var(--glass-bg-strong) !important;
+  border-color: rgba(45, 95, 63, 0.50) !important;
+}}
 
-/* 大きなプライマリCTAボタン用 */
-.stButton.zf-big-btn > button {
-  padding: 20px !important;
-  font-size: 18px !important;
-  border-radius: 16px !important;
-}
+/* === スクロールバー === */
+::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+::-webkit-scrollbar-track {{ background: transparent; }}
+::-webkit-scrollbar-thumb {{
+  background: rgba(140, 120, 100, 0.30);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}}
+::-webkit-scrollbar-thumb:hover {{ background: rgba(140, 120, 100, 0.50); background-clip: content-box; }}
 
-/* マルチセレクト */
-[data-baseweb="tag"] {
-  background: var(--primary-light) !important;
-  border-radius: 8px !important;
-  color: var(--primary-dark) !important;
-}
+/* === 入場アニメ === */
+@keyframes glassIn {{
+  from {{ opacity: 0; transform: translateY(8px); }}
+  to   {{ opacity: 1; transform: translateY(0); }}
+}}
+.zf-hero, [data-testid="stMetric"] {{
+  animation: glassIn 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}}
 
-/* file uploader */
-[data-testid="stFileUploadDropzone"] {
-  background: var(--surface-alt) !important;
-  border: 2px dashed var(--border) !important;
-  border-radius: 14px !important;
-}
+/* === Safari/Firefox の backdrop-filter フォールバック === */
+@supports not ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {{
+  .stTabs [data-baseweb="tab-list"],
+  .stButton > button,
+  [data-testid="stMetric"],
+  [data-testid="stExpander"],
+  [data-testid="stDataFrame"],
+  [data-testid="stSidebar"],
+  .stAlert {{
+    background: rgba(255, 255, 255, 0.92) !important;
+  }}
+}}
 </style>
 """
 
-MOBILE_CSS = """
+MOBILE_CSS = f"""
 <style>
-.main .block-container {
-  padding: 0.5rem 0.75rem 2rem 0.75rem !important;
+/* モバイル時も日本語フォントを再宣言（文字化け防止） */
+html, body, .stApp, [class*="css"], [class*="st-"], [data-testid] {{
+  font-family: {JP_FONT_STACK} !important;
+}}
+h1, h2, h3, h4, h5 {{
+  font-family: {JP_HEAD_STACK} !important;
+}}
+
+.main .block-container {{
+  padding: 0.75rem 1rem 3rem 1rem !important;
   max-width: 100% !important;
-}
-.zf-hero { padding: 18px 20px; border-radius: 18px; margin-bottom: 18px; }
-.zf-hero h1 { font-size: 22px !important; }
-.zf-hero .sub { font-size: 12px; }
-.zf-hero::before { font-size: 100px; right: -10px; bottom: -30px; }
+}}
 
-.stTabs [data-baseweb="tab"] {
-  padding: 7px 11px !important;
+.zf-hero {{ padding: 22px 24px; border-radius: 22px; margin-bottom: 22px; }}
+.zf-hero h1 {{ font-size: 24px !important; }}
+.zf-hero .sub {{ font-size: 12px; }}
+.zf-hero::before {{ font-size: 120px; right: -15px; bottom: -35px; }}
+
+.stTabs [data-baseweb="tab-list"] {{ padding: 6px; border-radius: 18px; }}
+.stTabs [data-baseweb="tab"] {{
+  padding: 8px 13px !important;
   font-size: 12px !important;
-}
+}}
 
-.stButton > button, .stDownloadButton > button {
-  padding: 12px 18px !important;
+.stButton > button, .stDownloadButton > button {{
+  padding: 14px 20px !important;
   font-size: 15px !important;
-  min-height: 46px;
+  min-height: 48px;
   width: 100%;
-}
+  border-radius: 999px !important;
+}}
 
-[data-testid="stMetric"] {
-  padding: 12px 14px !important;
-}
-[data-testid="stMetricValue"] { font-size: 22px !important; }
-[data-testid="stMetricLabel"] { font-size: 10px !important; }
+[data-testid="stMetric"] {{
+  padding: 14px 16px !important;
+  border-radius: 18px !important;
+}}
+[data-testid="stMetricValue"] {{ font-size: 24px !important; }}
+[data-testid="stMetricLabel"] {{ font-size: 10px !important; }}
 
-h2 { font-size: 18px !important; }
-h3 { font-size: 16px !important; }
-h4 { font-size: 14px !important; }
+h2 {{ font-size: 19px !important; }}
+h3 {{ font-size: 16px !important; }}
+h4 {{ font-size: 14px !important; }}
 </style>
 """
 
