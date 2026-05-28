@@ -221,31 +221,446 @@ def hours_since(iso_str: Optional[str]) -> Optional[float]:
 # ============================================================
 st.set_page_config(page_title="ゼブラフィッシュ水槽管理", page_icon="🐟", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    /* 温かみのある見出し */
-    h1, h2, h3 { letter-spacing: 0.02em; }
-    /* ボタンを少し丸く */
-    .stButton>button { border-radius: 12px; padding: 0.5rem 1rem; }
-    /* メトリクスカードの背景 */
-    [data-testid="stMetric"] {
-        background: #FFFDF8;
-        padding: 12px 16px;
-        border-radius: 14px;
-        border: 1px solid #E8DDC8;
-    }
-    /* 警告色 */
-    .feed-ok    { color: #5C8D5A; font-weight: 600; }
-    .feed-warn  { color: #C48A2A; font-weight: 600; }
-    .feed-alert { color: #B94A3A; font-weight: 700; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
-st.title("🐟 ゼブラフィッシュ水槽管理")
-st.caption(f"今日は {date.today().strftime('%Y年%m月%d日')}")
+# --- サイドバー：表示モード切替 ---
+if "mobile_mode" not in st.session_state:
+    st.session_state.mobile_mode = False
+
+with st.sidebar:
+    st.markdown(
+        '<div style="padding:8px 4px 16px 4px">'
+        '<div style="font-size:11px;letter-spacing:0.18em;color:#8A7B68;'
+        'text-transform:uppercase;margin-bottom:6px">ZEBRAFISH LAB</div>'
+        '<div style="font-size:20px;font-weight:700;color:#1F1A14;'
+        'font-family:\'Zen Maru Gothic\',sans-serif">水槽管理システム</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+    st.markdown("##### ⚙️ 表示設定")
+    new_mode = st.checkbox("📱 モバイル表示", value=st.session_state.mobile_mode,
+                            help="スマホ/タブレット向けにレイアウトを調整します")
+    if new_mode != st.session_state.mobile_mode:
+        st.session_state.mobile_mode = new_mode
+        st.rerun()
+
+    st.markdown("---")
+    st.caption("🌱 v2.2")
+    st.caption(date.today().strftime("%Y年 %m月 %d日"))
+
+
+# --- 統一デザインシステム CSS ---
+BASE_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700&family=Cormorant+Garamond:wght@500;700&display=swap');
+
+:root {
+  --bg: #FAF6EE;
+  --bg-soft: #F5EFE0;
+  --surface: #FFFFFF;
+  --surface-alt: #FDFAF3;
+  --primary: #2D5F3F;
+  --primary-dark: #234A31;
+  --primary-soft: #5C8D5A;
+  --primary-light: #B8DDB6;
+  --accent: #C97B4F;
+  --accent-soft: #F5D7A1;
+  --danger: #B94A3A;
+  --danger-soft: #E8B4A8;
+  --text: #1F1A14;
+  --text-soft: #6B5D4F;
+  --text-mute: #9C8E7C;
+  --border: #EFE5D2;
+  --border-soft: #F5EFE0;
+  --shadow-sm: 0 1px 3px rgba(95, 75, 50, 0.06);
+  --shadow: 0 2px 12px rgba(95, 75, 50, 0.08);
+  --shadow-lg: 0 8px 32px rgba(95, 75, 50, 0.12);
+}
+
+/* グローバル */
+html, body, [class*="css"], [class*="st-"] {
+  font-family: 'Zen Kaku Gothic New', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  color: var(--text);
+}
+
+.stApp {
+  background:
+    radial-gradient(ellipse at top left, rgba(184, 221, 182, 0.18), transparent 50%),
+    radial-gradient(ellipse at top right, rgba(245, 215, 161, 0.20), transparent 50%),
+    var(--bg);
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Zen Maru Gothic', sans-serif !important;
+  color: var(--text) !important;
+  letter-spacing: 0.01em;
+  font-weight: 700 !important;
+}
+
+h2 { font-size: 22px !important; margin-top: 0.5rem !important; }
+h3 { font-size: 18px !important; }
+h4 { font-size: 15px !important; }
+
+/* メインコンテナの余白 */
+.main .block-container {
+  padding-top: 1.5rem !important;
+  padding-bottom: 3rem !important;
+  max-width: 1400px;
+}
+
+/* タブ */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 2px;
+  background: var(--surface);
+  padding: 6px;
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.stTabs [data-baseweb="tab"] {
+  background: transparent;
+  border-radius: 11px !important;
+  padding: 9px 18px !important;
+  color: var(--text-soft) !important;
+  font-weight: 500 !important;
+  font-size: 14px !important;
+  transition: all 0.18s ease;
+  border: none !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+  background: rgba(45, 95, 63, 0.06);
+  color: var(--primary) !important;
+}
+
+.stTabs [aria-selected="true"] {
+  background: var(--primary) !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(45, 95, 63, 0.25);
+}
+
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {
+  display: none !important;
+}
+
+/* ボタン */
+.stButton > button, .stDownloadButton > button {
+  border-radius: 12px !important;
+  padding: 9px 20px !important;
+  font-weight: 500 !important;
+  border: 1px solid var(--border) !important;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.18s ease;
+}
+
+.stButton > button:hover, .stDownloadButton > button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+  border-color: var(--primary-soft) !important;
+  color: var(--primary) !important;
+}
+
+.stButton > button[kind="primary"] {
+  background: var(--primary) !important;
+  color: white !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 2px 10px rgba(45, 95, 63, 0.25);
+}
+
+.stButton > button[kind="primary"]:hover {
+  background: var(--primary-dark) !important;
+  color: white !important;
+  box-shadow: 0 6px 20px rgba(45, 95, 63, 0.30);
+}
+
+/* メトリクスカード */
+[data-testid="stMetric"] {
+  background: var(--surface);
+  padding: 18px 22px !important;
+  border-radius: 16px !important;
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+[data-testid="stMetric"]:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+[data-testid="stMetricLabel"] {
+  color: var(--text-mute) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
+}
+
+[data-testid="stMetricValue"] {
+  color: var(--text) !important;
+  font-weight: 700 !important;
+  font-family: 'Zen Maru Gothic', sans-serif !important;
+  font-size: 28px !important;
+  line-height: 1.2 !important;
+}
+
+[data-testid="stMetricDelta"] {
+  color: var(--text-soft) !important;
+}
+
+/* フォーム入力 */
+.stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  padding: 9px 13px !important;
+  color: var(--text) !important;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus, .stDateInput input:focus {
+  border-color: var(--primary-soft) !important;
+  box-shadow: 0 0 0 3px rgba(92, 141, 90, 0.12) !important;
+  outline: none !important;
+}
+
+.stSelectbox > div > div {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+
+/* ラベル */
+.stTextInput label, .stTextArea label, .stNumberInput label, .stDateInput label,
+.stSelectbox label, .stMultiSelect label, .stRadio label, .stCheckbox label {
+  color: var(--text-soft) !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+
+/* データテーブル */
+[data-testid="stDataFrame"] {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+/* アラート */
+.stAlert {
+  border-radius: 14px !important;
+  border: none !important;
+  padding: 14px 18px !important;
+  box-shadow: var(--shadow-sm);
+}
+
+div[data-baseweb="notification"] {
+  border-radius: 14px !important;
+}
+
+/* 区切り線 */
+hr {
+  border: none !important;
+  height: 1px !important;
+  background: linear-gradient(90deg, transparent, var(--border), transparent) !important;
+  margin: 28px 0 !important;
+}
+
+/* expander */
+[data-testid="stExpander"] {
+  background: var(--surface);
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+[data-testid="stExpander"] summary {
+  padding: 12px 18px !important;
+  font-weight: 500 !important;
+}
+
+/* progress */
+.stProgress > div > div > div {
+  background: linear-gradient(90deg, var(--primary-soft), var(--primary)) !important;
+  border-radius: 8px !important;
+}
+
+.stProgress > div > div {
+  background-color: var(--border-soft) !important;
+  border-radius: 8px !important;
+}
+
+/* サイドバー */
+[data-testid="stSidebar"] {
+  background: var(--surface);
+  border-right: 1px solid var(--border-soft);
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+  color: var(--text-soft);
+}
+
+/* ヒーローカード */
+.zf-hero {
+  background:
+    radial-gradient(circle at 90% 20%, rgba(201, 123, 79, 0.20), transparent 40%),
+    linear-gradient(135deg, #2D5F3F 0%, #5C8D5A 100%);
+  border-radius: 24px;
+  padding: 28px 36px;
+  color: white;
+  box-shadow: 0 10px 40px rgba(45, 95, 63, 0.18);
+  margin: 0 0 28px 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.zf-hero::before {
+  content: '🐟';
+  position: absolute;
+  font-size: 180px;
+  right: -20px;
+  bottom: -50px;
+  opacity: 0.10;
+  transform: rotate(-12deg);
+}
+
+.zf-hero .eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
+  margin: 0 0 6px 0;
+}
+
+.zf-hero h1 {
+  color: white !important;
+  margin: 0 !important;
+  font-size: 32px !important;
+  font-family: 'Zen Maru Gothic', sans-serif !important;
+  letter-spacing: 0.01em;
+}
+
+.zf-hero .sub {
+  color: rgba(255, 255, 255, 0.85);
+  margin: 6px 0 0 0;
+  font-size: 14px;
+}
+
+/* 区切りラベル */
+.zf-section-label {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  font-weight: 600;
+  margin: 8px 0 12px 0;
+}
+
+/* インラインピル */
+.zf-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--border-soft);
+  color: var(--text-soft);
+}
+
+/* 餌やりステータスのテキスト */
+.feed-ok    { color: var(--primary-soft); font-weight: 600; }
+.feed-warn  { color: var(--accent);       font-weight: 600; }
+.feed-alert { color: var(--danger);       font-weight: 700; }
+
+/* 大きなプライマリCTAボタン用 */
+.stButton.zf-big-btn > button {
+  padding: 20px !important;
+  font-size: 18px !important;
+  border-radius: 16px !important;
+}
+
+/* マルチセレクト */
+[data-baseweb="tag"] {
+  background: var(--primary-light) !important;
+  border-radius: 8px !important;
+  color: var(--primary-dark) !important;
+}
+
+/* file uploader */
+[data-testid="stFileUploadDropzone"] {
+  background: var(--surface-alt) !important;
+  border: 2px dashed var(--border) !important;
+  border-radius: 14px !important;
+}
+</style>
+"""
+
+MOBILE_CSS = """
+<style>
+.main .block-container {
+  padding: 0.5rem 0.75rem 2rem 0.75rem !important;
+  max-width: 100% !important;
+}
+.zf-hero { padding: 18px 20px; border-radius: 18px; margin-bottom: 18px; }
+.zf-hero h1 { font-size: 22px !important; }
+.zf-hero .sub { font-size: 12px; }
+.zf-hero::before { font-size: 100px; right: -10px; bottom: -30px; }
+
+.stTabs [data-baseweb="tab"] {
+  padding: 7px 11px !important;
+  font-size: 12px !important;
+}
+
+.stButton > button, .stDownloadButton > button {
+  padding: 12px 18px !important;
+  font-size: 15px !important;
+  min-height: 46px;
+  width: 100%;
+}
+
+[data-testid="stMetric"] {
+  padding: 12px 14px !important;
+}
+[data-testid="stMetricValue"] { font-size: 22px !important; }
+[data-testid="stMetricLabel"] { font-size: 10px !important; }
+
+h2 { font-size: 18px !important; }
+h3 { font-size: 16px !important; }
+h4 { font-size: 14px !important; }
+</style>
+"""
+
+st.markdown(BASE_CSS, unsafe_allow_html=True)
+if st.session_state.mobile_mode:
+    st.markdown(MOBILE_CSS, unsafe_allow_html=True)
+
+
+# --- ヒーロー ---
+weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][date.today().weekday()]
+_hour = datetime.now().hour
+if _hour < 5:
+    _greeting = "おつかれさまです"
+elif _hour < 11:
+    _greeting = "おはようございます"
+elif _hour < 17:
+    _greeting = "こんにちは"
+else:
+    _greeting = "こんばんは"
+
+hero_html = f"""
+<div class="zf-hero">
+  <div class="eyebrow">ZEBRAFISH MANAGEMENT</div>
+  <h1>{_greeting} 🐟</h1>
+  <p class="sub">{date.today().strftime("%Y年 %m月 %d日")}（{weekday_jp}）・餌やり、交配、成績まで1画面で</p>
+</div>
+"""
+st.markdown(hero_html, unsafe_allow_html=True)
 
 (tab_dash, tab_feed, tab_trial, tab_analysis, tab_rack,
  tab_tank, tab_ind, tab_spawn) = st.tabs(
@@ -266,8 +681,6 @@ st.caption(f"今日は {date.today().strftime('%Y年%m月%d日')}")
 # 📊 ダッシュボード
 # ============================================================
 with tab_dash:
-    st.header("ダッシュボード")
-
     df_tanks = fetch_df("SELECT * FROM tanks")
     df_inds = fetch_df("SELECT * FROM individuals")
     df_spawn = fetch_df("SELECT * FROM spawning_records")
@@ -278,6 +691,7 @@ with tab_dash:
         "SELECT * FROM feeding_logs WHERE substr(fed_at,1,10)=?", (today,)
     )
 
+    st.markdown('<div class="zf-section-label">📊 オーバービュー</div>', unsafe_allow_html=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("🪣 水槽数", len(df_tanks))
     col2.metric("🐠 個体数", len(df_inds))
@@ -287,8 +701,9 @@ with tab_dash:
     in_progress = int(df_trials["status"].isin(["計画中", "前日セット済み", "採卵済み"]).sum()) if not df_trials.empty else 0
     col5.metric("💕 進行中トライアル", in_progress)
 
-    st.divider()
+    st.markdown("<br/>", unsafe_allow_html=True)
 
+    st.markdown('<div class="zf-section-label">🍃 今日の状況</div>', unsafe_allow_html=True)
     # 給餌サマリ
     left, right = st.columns(2)
     with left:
@@ -330,10 +745,10 @@ with tab_dash:
                 st.dataframe(isolated_df[["tank_id", "current_individual_id", "memo"]],
                              use_container_width=True, hide_index=True)
 
-    st.divider()
+    st.markdown("<br/>", unsafe_allow_html=True)
 
-    # 進行中トライアル
-    st.subheader("💕 進行中の交配トライアル")
+    st.markdown('<div class="zf-section-label">💕 アクティブ・トライアル</div>', unsafe_allow_html=True)
+    st.subheader("進行中の交配トライアル")
     if df_trials.empty:
         st.info("トライアルがまだ登録されていません")
     else:
@@ -346,8 +761,9 @@ with tab_dash:
                 use_container_width=True, hide_index=True,
             )
 
-    st.divider()
-    st.subheader("📥 CSV ダウンロード")
+    st.markdown("<br/>", unsafe_allow_html=True)
+    st.markdown('<div class="zf-section-label">📥 データエクスポート</div>', unsafe_allow_html=True)
+    st.subheader("CSV ダウンロード")
     d1, d2, d3, d4, d5 = st.columns(5)
     with d1:
         st.download_button("水槽", to_csv_bytes(df_tanks), csv_filename("tanks"),

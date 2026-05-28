@@ -1,9 +1,9 @@
 [theme]
-# 温かみのあるベージュ × 水草グリーン
-primaryColor = "#5C8D5A"
-backgroundColor = "#FBF7F0"
-secondaryBackgroundColor = "#F0E8D8"
-textColor = "#3C3530"
+# 洗練された温かみ：深い森緑 × クリーム × テラコッタアクセント
+primaryColor = "#2D5F3F"
+backgroundColor = "#FAF6EE"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F1A14"
 font = "sans serif"
 
 [browser]
