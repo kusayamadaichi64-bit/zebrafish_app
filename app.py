@@ -1403,17 +1403,21 @@ with tab_tank:
         lin = f"  ・{r['lineage']}" if r["lineage"] else ""
         return f"{gid}{suffix}{lin}"
 
-    with st.form("tank_form", clear_on_submit=True):
+    with st.form("tank_form", clear_on_submit=False):
         st.subheader("水槽の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
-            tank_id = st.text_input("水槽ID（例: T-001 / または場所コードと同じ B-2-05 でもOK）")
+            tank_id = st.text_input(
+                "水槽ID（例: T-001 / または場所コードと同じ B-2-05 でもOK）",
+                key="tk_id",
+            )
             current_ind = st.selectbox(
                 "入っている群", [""] + ind_ids,
                 format_func=fmt_group,
                 help="個体管理タブで登録した群が選択肢に出ます",
+                key="tk_group",
             )
-            health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"])
+            health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health")
         with c2:
             st.markdown("**場所**（ラック - 段 - 列）")
             lc1, lc2, lc3 = st.columns(3)
@@ -1426,7 +1430,7 @@ with tab_tank:
                 int(col_str) if col_str else None,
             )
             st.caption(f"場所コード：**{preview or '（未設定）'}**")
-            memo = st.text_area("メモ", height=80)
+            memo = st.text_area("メモ", height=80, key="tk_memo")
 
         if st.form_submit_button("登録 / 更新", type="primary"):
             if not tank_id.strip():
@@ -1786,17 +1790,18 @@ with tab_spawn:
         "ORDER BY individual_id"
     )["individual_id"].tolist()
 
-    with st.form("spawn_form", clear_on_submit=True):
+    with st.form("spawn_form", clear_on_submit=False):
         st.subheader("手入力で追加")
         c1, c2, c3 = st.columns(3)
         with c1:
-            sdate = st.date_input("産卵日", value=today_jst())
-            male = st.selectbox("オス親ID", [""] + males)
+            sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
+            male = st.selectbox("オス親ID（群）", [""] + males, key="sp_male")
         with c2:
-            female = st.selectbox("メス親ID", [""] + females)
-            eggs = st.number_input("採卵数", min_value=0, step=1)
+            female = st.selectbox("メス親ID（群）", [""] + females, key="sp_female")
+            eggs = st.number_input("採卵数", min_value=0, step=1, key="sp_eggs")
         with c3:
-            rate = st.number_input("受精率 (%)", min_value=0.0, max_value=100.0, step=0.1)
+            rate = st.number_input("受精率 (%)", min_value=0.0, max_value=100.0, step=0.1,
+                                   key="sp_rate")
         if st.form_submit_button("登録", type="primary"):
             if not male or not female:
                 st.error("オス親IDとメス親IDを選択してください")
