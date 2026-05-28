@@ -36,11 +36,11 @@ FEED_WARN_HOURS = 2     # この時間を超えたら黄色
 FEED_ALERT_HOURS = 6    # この時間を超えたら赤
 TRIAL_STATUSES = ["計画中", "前日セット済み", "採卵済み", "戻し済み", "中止"]
 
-# 水槽の物理配置（あとから書き換えれば構造変更可）
-RACKS = ["A", "B", "C", "D"]         # ラック
+# 水槽の物理配置
+# RACKS は app_settings.racks から動的にロード（UI から追加可）
+DEFAULT_RACKS = ["A", "B", "C", "D"]
 TIERS = [1, 2, 3, 4]                  # 段
 COLS = list(range(1, 16))             # 列 1〜15
-# → 計 len(RACKS) * len(TIERS) * len(COLS) = 240 水槽
 
 
 def format_location(rack, tier, col_no):
@@ -214,10 +214,98 @@ def init_db():
         for col_def in [("male_tag", "TEXT"), ("female_tag", "TEXT")]:
             if col_def[0] not in trial_cols:
                 c.execute(f"ALTER TABLE mating_trials ADD COLUMN {col_def[0]} {col_def[1]}")
+
+        # 設定テーブル（段の一覧などを保存）
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         conn.commit()
+
+    # 群IDマイグレーション: 既存の9桁数字IDに 'A' プレフィックスを付ける
+    # （A段の登録分という前提。新ID形式は <段文字>NNNYYMMDD = 10文字）
+    migrate_conn = sqlite3.connect(DB_PATH)
+    try:
+        # FK enforcement off（参照列も一括書き換えるため）
+        migrate_conn.execute("PRAGMA foreign_keys = OFF")
+        cur = migrate_conn.execute(
+            "SELECT COUNT(*) FROM individuals "
+            "WHERE length(individual_id) = 9 "
+            "AND individual_id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'"
+        )
+        if cur.fetchone()[0] > 0:
+            for tbl, col in [
+                ("individuals",       "individual_id"),
+                ("tanks",             "current_individual_id"),
+                ("spawning_records",  "male_parent_id"),
+                ("spawning_records",  "female_parent_id"),
+                ("mating_trials",     "male_id"),
+                ("mating_trials",     "female_id"),
+            ]:
+                migrate_conn.execute(
+                    f"UPDATE {tbl} SET {col} = 'A' || {col} "
+                    f"WHERE {col} IS NOT NULL "
+                    f"AND length({col}) = 9 "
+                    f"AND {col} GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'"
+                )
+            migrate_conn.commit()
+    finally:
+        migrate_conn.close()
 
 
 init_db()
+
+
+# === 設定（段の動的管理） =========================================
+def get_setting(key, default=None):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+
+def set_setting(key, value):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
+
+
+def load_racks():
+    raw = get_setting("racks", ",".join(DEFAULT_RACKS))
+    items = [s.strip() for s in raw.split(",") if s.strip()]
+    return items or DEFAULT_RACKS[:]
+
+
+def add_rack(letter):
+    letter = letter.strip().upper()
+    if not letter or not letter.isalpha() or len(letter) > 2:
+        return False, "段は1〜2文字のアルファベットで入力してください"
+    current = load_racks()
+    if letter in current:
+        return False, f"段 {letter} は既に存在します"
+    current.append(letter)
+    set_setting("racks", ",".join(current))
+    return True, f"段 {letter} を追加しました"
+
+
+def remove_rack(letter):
+    current = load_racks()
+    if letter not in current:
+        return False, "存在しない段です"
+    if len(current) <= 1:
+        return False, "段は最低1つ必要です"
+    current.remove(letter)
+    set_setting("racks", ",".join(current))
+    return True, f"段 {letter} を削除しました"
+
+
+RACKS = load_racks()
+# 計 len(RACKS) * len(TIERS) * len(COLS) 水槽
 
 
 # ============================================================
@@ -286,7 +374,27 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("🌱 v2.2")
+    with st.expander("🪜 段の管理", expanded=False):
+        st.caption(f"現在の段：{', '.join(RACKS)}")
+        new_rack = st.text_input("追加する段（1〜2文字）", max_chars=2, key="add_rack_in").upper()
+        ac1, ac2 = st.columns(2)
+        if ac1.button("➕ 追加", key="add_rack_btn", use_container_width=True):
+            if new_rack:
+                ok, msg = add_rack(new_rack)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+        if len(RACKS) > 1:
+            rm_rack = ac2.selectbox("削除", RACKS, key="rm_rack_sel",
+                                     label_visibility="collapsed")
+            if ac2.button("🗑️ 削除", key="rm_rack_btn", use_container_width=True):
+                ok, msg = remove_rack(rm_rack)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+
+    st.markdown("---")
+    st.caption("🌱 v2.3")
     st.caption(today_jst().strftime("%Y年 %m月 %d日"))
 
 
@@ -1670,27 +1778,32 @@ with tab_ind:
         " 1つの群ID = 同じ系統・同じ世代の魚の集まり。性別ごとに匹数を入力してください。"
     )
 
-    # 既存の番号一覧（重複防止用ヒント）
+    # 既存IDの一覧（重複防止用）
     _existing_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
-    _today_str = today_jst().strftime("%y%m%d")
-    _today_seqs = [int(i[:3]) for i in _existing_ids
-                   if len(i) == 9 and i[3:9] == _today_str and i[:3].isdigit()]
-    _suggested_seq = (max(_today_seqs) + 1) if _today_seqs else 1
 
     st.subheader("群の登録 / 更新")
 
     # === ライブプレビュー部 (form の外 = 入力するたびに即時更新) ===
-    pc1, pc2 = st.columns(2)
+    pc1, pc2, pc3 = st.columns([1, 1, 2])
     with pc1:
+        rack_letter = st.selectbox("段", RACKS, key="ind_rack",
+                                    help="サイドバーから段の追加・削除ができます")
+    # 同じ (段, 日) の既存番号から次の空き番号を計算
+    _today_str = today_jst().strftime("%y%m%d")
+    _today_seqs = [int(i[1:4]) for i in _existing_ids
+                   if len(i) == 10 and i[0] == rack_letter
+                   and i[4:10] == _today_str and i[1:4].isdigit()]
+    _suggested_seq = (max(_today_seqs) + 1) if _today_seqs else 1
+    with pc2:
         seq_no = st.number_input(
             "番号（001〜999）", min_value=1, max_value=999,
             value=int(_suggested_seq), step=1, key="ind_seq",
-            help="この日に何番目に登録するか。次の空き番号を初期表示しています。",
+            help="この日・この段で何番目か。次の空き番号を初期表示しています。",
         )
-    with pc2:
+    with pc3:
         entry_date = st.date_input("入力日", value=today_jst(), key="ind_date")
 
-    auto_id = f"{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
+    auto_id = f"{rack_letter}{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
     already = auto_id in _existing_ids
     overwrite_note = (
         '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
