@@ -113,9 +113,27 @@ def init_db():
             CREATE TABLE IF NOT EXISTS individuals (
                 individual_id TEXT PRIMARY KEY,
                 birth_date    TEXT,
-                sex           TEXT CHECK(sex IN ('オス','メス','混合')),
-                lineage       TEXT
+                sex           TEXT,
+                lineage       TEXT,
+                male_count    INTEGER DEFAULT 0,
+                female_count  INTEGER DEFAULT 0,
+                unknown_count INTEGER DEFAULT 0
             )
+        """)
+        # マイグレーション: 既存テーブルに male/female/unknown_count 列を追加
+        ind_cols = [r[1] for r in c.execute("PRAGMA table_info(individuals)").fetchall()]
+        for col_def in [("male_count", "INTEGER DEFAULT 0"),
+                        ("female_count", "INTEGER DEFAULT 0"),
+                        ("unknown_count", "INTEGER DEFAULT 0")]:
+            if col_def[0] not in ind_cols:
+                c.execute(f"ALTER TABLE individuals ADD COLUMN {col_def[0]} {col_def[1]}")
+        # 既存レコードでカウントが全て0なら sex から推測して 1 をバックフィル
+        c.execute("""
+            UPDATE individuals
+            SET male_count    = CASE WHEN sex IN ('オス','混合') THEN 1 ELSE 0 END,
+                female_count  = CASE WHEN sex IN ('メス','混合') THEN 1 ELSE 0 END,
+                unknown_count = 0
+            WHERE COALESCE(male_count,0) + COALESCE(female_count,0) + COALESCE(unknown_count,0) = 0
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS tanks (
@@ -184,11 +202,18 @@ def init_db():
                 returned_at         TEXT,
                 spawning_history_id INTEGER,
                 notes               TEXT,
+                male_tag            TEXT,
+                female_tag          TEXT,
                 FOREIGN KEY (male_id)             REFERENCES individuals(individual_id),
                 FOREIGN KEY (female_id)           REFERENCES individuals(individual_id),
                 FOREIGN KEY (spawning_history_id) REFERENCES spawning_records(history_id)
             )
         """)
+        # マイグレーション: 既存テーブルに male_tag/female_tag 追加
+        trial_cols = [r[1] for r in c.execute("PRAGMA table_info(mating_trials)").fetchall()]
+        for col_def in [("male_tag", "TEXT"), ("female_tag", "TEXT")]:
+            if col_def[0] not in trial_cols:
+                c.execute(f"ALTER TABLE mating_trials ADD COLUMN {col_def[0]} {col_def[1]}")
         conn.commit()
 
 
@@ -1070,10 +1095,18 @@ with tab_feed:
 # ============================================================
 with tab_trial:
     st.header("交配トライアル管理")
+    st.caption("「♂群から1匹 × ♀群から1匹」をペアリングして交配。個別タグは任意（テスト機能）。")
 
-    inds = fetch_df("SELECT individual_id, sex FROM individuals")
-    males = inds[inds["sex"].isin(["オス", "混合"])]["individual_id"].tolist()
-    females = inds[inds["sex"].isin(["メス", "混合"])]["individual_id"].tolist()
+    males = fetch_df(
+        "SELECT individual_id FROM individuals "
+        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY individual_id"
+    )["individual_id"].tolist()
+    females = fetch_df(
+        "SELECT individual_id FROM individuals "
+        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY individual_id"
+    )["individual_id"].tolist()
     tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
 
     # --- 新規計画 ---
@@ -1082,25 +1115,37 @@ with tab_trial:
             c1, c2 = st.columns(2)
             with c1:
                 planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1))
-                male = st.selectbox("オス", [""] + males)
-                female = st.selectbox("メス", [""] + females)
+                male = st.selectbox("♂ オス側の群", [""] + males,
+                                    help="オスを取り出す群を選択")
+                female = st.selectbox("♀ メス側の群", [""] + females,
+                                      help="メスを取り出す群を選択")
             with c2:
-                src_m = st.selectbox("オスの元水槽（戻し先）", [""] + tank_ids)
-                src_f = st.selectbox("メスの元水槽（戻し先）", [""] + tank_ids)
+                src_m = st.selectbox("オス側の元水槽（戻し先）", [""] + tank_ids)
+                src_f = st.selectbox("メス側の元水槽（戻し先）", [""] + tank_ids)
                 breed = st.selectbox("交配用水槽", [""] + tank_ids)
+
+            with st.expander("🏷️ 個別交配タグ（任意 / テスト機能）", expanded=False):
+                st.caption(
+                    "1匹だけ特別に追跡したい時に、このトライアル限定の仮名を付けられます。"
+                    "未入力でOK。使わないようなら後で削除可。"
+                )
+                tc1, tc2 = st.columns(2)
+                male_tag = tc1.text_input("♂ 個別タグ", placeholder="例: M-test01")
+                female_tag = tc2.text_input("♀ 個別タグ", placeholder="例: F-test01")
+
             notes = st.text_area("メモ")
             ok = st.form_submit_button("計画を登録", type="primary")
             if ok:
                 if not male or not female:
-                    st.error("オスとメスを選択してください")
+                    st.error("オスとメスの群を選択してください")
                 else:
                     execute(
                         """INSERT INTO mating_trials
                            (planned_date, male_id, female_id, source_tank_male, source_tank_female,
-                            breeding_tank_id, notes)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            breeding_tank_id, notes, male_tag, female_tag)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (planned.isoformat(), male, female, src_m or None, src_f or None,
-                         breed or None, notes),
+                         breed or None, notes, male_tag or None, female_tag or None),
                     )
                     st.success("計画を登録しました")
                     st.rerun()
@@ -1122,8 +1167,12 @@ with tab_trial:
             badge = {"計画中": "🟦", "前日セット済み": "🟨", "採卵済み": "🟧"}.get(status, "⬜")
             with st.container():
                 top = st.columns([3, 2, 2])
+                m_tag = t.get("male_tag") if isinstance(t, dict) else (t["male_tag"] if "male_tag" in t.index else None)
+                f_tag = t.get("female_tag") if isinstance(t, dict) else (t["female_tag"] if "female_tag" in t.index else None)
+                m_label = f"♂ {t['male_id']}" + (f" [{m_tag}]" if pd.notna(m_tag) and m_tag else "")
+                f_label = f"♀ {t['female_id']}" + (f" [{f_tag}]" if pd.notna(f_tag) and f_tag else "")
                 top[0].markdown(f"### {badge} Trial #{tid} — {status}")
-                top[0].caption(f"予定日: {t['planned_date']}　♂ {t['male_id']}　×　♀ {t['female_id']}")
+                top[0].caption(f"予定日: {t['planned_date']}　{m_label}　×　{f_label}")
                 top[1].markdown(f"**交配用水槽:** {t['breeding_tank_id'] or '-'}")
                 top[2].markdown(f"**戻し先:** ♂{t['source_tank_male'] or '-'} / ♀{t['source_tank_female'] or '-'}")
 
@@ -1562,44 +1611,82 @@ with tab_tank:
 
 
 # ============================================================
-# 🐠 個体管理
+# 🐠 個体管理（群 = 個体グループ）
 # ============================================================
 with tab_ind:
-    st.header("個体管理")
+    st.header("個体管理（群）")
+    st.caption(
+        "ゼブラフィッシュは見た目で個体識別できないため、**群（コホート）単位**で管理します。"
+        " 1つの群ID = 同じ系統・同じ世代の魚の集まり。性別ごとに匹数を入力してください。"
+    )
+
     with st.form("ind_form", clear_on_submit=True):
-        st.subheader("個体の登録 / 更新")
+        st.subheader("群の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
-            ind_id = st.text_input("個体ID（例: F-001）")
-            birth = st.date_input("生まれた日付", value=today_jst())
-        with c2:
-            sex = st.selectbox("性別", ["オス", "メス", "混合"])
+            ind_id = st.text_input("群ID（例: AB-2026-01 / F-001）",
+                                   help="同じ系統・世代でまとめた群に1つのIDを付けます")
+            birth = st.date_input("生まれた日付（コホート発生日）", value=today_jst())
             lineage = st.text_input("系統名（例: AB, TU, WIK）")
+        with c2:
+            st.markdown("**匹数（性別ごと）**")
+            mc1, mc2, mc3 = st.columns(3)
+            male_cnt = mc1.number_input("♂ オス", min_value=0, step=1, value=0)
+            female_cnt = mc2.number_input("♀ メス", min_value=0, step=1, value=0)
+            unknown_cnt = mc3.number_input("？ 不明", min_value=0, step=1, value=0,
+                                            help="性別未判定の若い魚など")
+            total = int(male_cnt) + int(female_cnt) + int(unknown_cnt)
+            st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
+                        f"合計 <b style='color:#1D1D1F;font-size:18px'>{total}</b> 匹</div>",
+                        unsafe_allow_html=True)
+
         if st.form_submit_button("登録 / 更新", type="primary"):
             if not ind_id.strip():
-                st.error("個体IDを入力してください")
+                st.error("群IDを入力してください")
+            elif total == 0:
+                st.error("匹数を1匹以上入力してください")
             else:
+                # sex は集計から自動決定（既存ロジック互換）
+                if male_cnt > 0 and female_cnt == 0 and unknown_cnt == 0:
+                    sex_v = "オス"
+                elif female_cnt > 0 and male_cnt == 0 and unknown_cnt == 0:
+                    sex_v = "メス"
+                else:
+                    sex_v = "混合"
                 execute(
-                    """INSERT INTO individuals (individual_id, birth_date, sex, lineage)
-                       VALUES (?, ?, ?, ?)
+                    """INSERT INTO individuals
+                       (individual_id, birth_date, sex, lineage,
+                        male_count, female_count, unknown_count)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(individual_id) DO UPDATE SET
                          birth_date=excluded.birth_date,
                          sex=excluded.sex,
-                         lineage=excluded.lineage""",
-                    (ind_id.strip(), birth.isoformat(), sex, lineage),
+                         lineage=excluded.lineage,
+                         male_count=excluded.male_count,
+                         female_count=excluded.female_count,
+                         unknown_count=excluded.unknown_count""",
+                    (ind_id.strip(), birth.isoformat(), sex_v, lineage,
+                     int(male_cnt), int(female_cnt), int(unknown_cnt)),
                 )
-                st.success(f"個体 {ind_id} を登録/更新しました")
+                st.success(f"群 {ind_id}（合計 {total} 匹）を登録/更新しました")
 
     st.divider()
-    st.subheader("登録済み個体")
-    df = fetch_df("SELECT * FROM individuals ORDER BY individual_id")
+    st.subheader("登録済みの群")
+    df = fetch_df(
+        "SELECT individual_id AS 群ID, lineage AS 系統, birth_date AS 発生日, "
+        "male_count AS 'オス', female_count AS 'メス', unknown_count AS '不明', "
+        "(COALESCE(male_count,0)+COALESCE(female_count,0)+COALESCE(unknown_count,0)) AS '合計' "
+        "FROM individuals ORDER BY individual_id"
+    )
     st.dataframe(df, use_container_width=True, hide_index=True)
-    st.download_button("📥 CSVダウンロード", to_csv_bytes(df), csv_filename("individuals"),
-                       "text/csv", disabled=df.empty, key="dl_individuals")
 
-    with st.expander("個体を削除する"):
-        if not df.empty:
-            del_id = st.selectbox("削除する個体ID", df["individual_id"].tolist(), key="del_ind")
+    df_raw = fetch_df("SELECT * FROM individuals ORDER BY individual_id")
+    st.download_button("📥 CSVダウンロード", to_csv_bytes(df_raw), csv_filename("individuals"),
+                       "text/csv", disabled=df_raw.empty, key="dl_individuals")
+
+    with st.expander("群を削除する"):
+        if not df_raw.empty:
+            del_id = st.selectbox("削除する群ID", df_raw["individual_id"].tolist(), key="del_ind")
             if st.button("削除", type="primary", key="del_ind_btn"):
                 execute("DELETE FROM individuals WHERE individual_id = ?", (del_id,))
                 st.rerun()
@@ -1612,9 +1699,16 @@ with tab_spawn:
     st.header("産卵成績")
     st.caption("交配トライアル経由で自動登録されるほか、ここから手入力もできます")
 
-    inds = fetch_df("SELECT individual_id, sex FROM individuals")
-    males = inds[inds["sex"].isin(["オス", "混合"])]["individual_id"].tolist()
-    females = inds[inds["sex"].isin(["メス", "混合"])]["individual_id"].tolist()
+    males = fetch_df(
+        "SELECT individual_id FROM individuals "
+        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY individual_id"
+    )["individual_id"].tolist()
+    females = fetch_df(
+        "SELECT individual_id FROM individuals "
+        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY individual_id"
+    )["individual_id"].tolist()
 
     with st.form("spawn_form", clear_on_submit=True):
         st.subheader("手入力で追加")
