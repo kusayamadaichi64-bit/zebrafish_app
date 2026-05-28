@@ -282,7 +282,11 @@ BASE_CSS = f"""
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }}
 
-/* === グローバル：日本語フォント（テキスト要素のみ。* を使わずアイコンを巻き込まない） === */
+/* === グローバル：継承ベースで日本語フォントを浸透させる ===
+   要点：
+   - body と stApp に font-family を設定 → 全要素が継承する
+   - span や i は触らない（Streamlit が material-symbols 用に独自 font-family を当てている）
+   - 「テキストを必ず持つ」要素だけ明示上書き */
 html, body, .stApp {{
   font-family: {JP_FONT_STACK} !important;
   color: var(--text);
@@ -290,7 +294,6 @@ html, body, .stApp {{
   -moz-osx-font-smoothing: grayscale;
 }}
 
-/* テキストを持つ Streamlit/HTML 要素を名指し */
 .stApp p, .stApp li, .stApp td, .stApp th,
 .stApp input, .stApp textarea, .stApp select, .stApp label,
 .stApp button, .stApp summary,
@@ -298,42 +301,52 @@ html, body, .stApp {{
 .stApp [data-testid="stMarkdownContainer"],
 .stApp [data-testid="stMarkdownContainer"] p,
 .stApp [data-testid="stMarkdownContainer"] li,
-.stApp [data-testid="stMarkdownContainer"] span,
 .stApp [data-testid="stMarkdownContainer"] div,
 .stApp [data-testid="stCaptionContainer"],
-.stApp [data-testid="stCaptionContainer"] *,
 .stApp [data-testid="stMetricLabel"],
 .stApp [data-testid="stMetricValue"],
 .stApp [data-testid="stMetricDelta"],
 .stApp [data-baseweb="tab"],
 .stApp [data-baseweb="tab-list"],
-.stApp [data-baseweb="select"] *,
-.stApp [data-baseweb="input"] *,
-.stApp [data-baseweb="popover"] *,
-.stApp [data-baseweb="menu"] *,
 [data-testid="stSidebar"],
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] li,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] button,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {{
+[data-testid="stSidebar"] button {{
   font-family: {JP_FONT_STACK} !important;
 }}
 
-/* expander のタイトルテキスト（子供のラベル部分のみ） */
-.stApp [data-testid="stExpander"] summary p,
-.stApp [data-testid="stExpander"] summary span:last-child,
-.stApp [data-testid="stExpander"] details > summary > div,
-.stApp .streamlit-expanderHeader,
-.stApp .streamlit-expanderHeader p {{
-  font-family: {JP_FONT_STACK} !important;
-}}
-
-/* スパン内のテキスト（アイコンでないもの）の保険：
-   material/icon クラスを含まないspanだけに適用 */
-.stApp span:not([class*="material"]):not([class*="icon"]):not([class*="Icon"]):not(.notranslate) {{
-  font-family: {JP_FONT_STACK} !important;
+/* === Material Symbols / Icons は絶対に守る ===
+   font-family と font-feature-settings を強制復元。
+   stApp プレフィックス付きで specificity を高めて、私の他の selector に勝つ */
+.stApp .material-icons,
+.stApp .material-icons-outlined,
+.stApp .material-icons-round,
+.stApp .material-symbols-outlined,
+.stApp .material-symbols-rounded,
+.stApp .material-symbols-sharp,
+.stApp [class*="material-symbols"],
+.stApp [class*="material-icons"],
+.stApp i.material-icons,
+.stApp i[class*="material"],
+.stApp span.material-icons,
+.stApp span[class*="material-symbols"],
+.stApp [data-testid="stIconMaterial"],
+.stApp [data-testid="stIcon"],
+.stApp [data-testid="stExpanderIcon"],
+.stApp [data-testid*="Material"],
+.stApp [data-testid*="Icon"] {{
+  font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
+               'Material Icons', 'Material Icons Outlined' !important;
+  font-feature-settings: 'liga' !important;
+  -webkit-font-feature-settings: 'liga' !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  word-wrap: normal !important;
+  white-space: nowrap !important;
+  direction: ltr !important;
 }}
 
 h1, h2, h3, h4, h5,
@@ -546,13 +559,51 @@ hr {{
   overflow: hidden;
 }}
 [data-testid="stExpander"] summary,
-[data-testid="stExpander"] summary *,
-[data-testid="stExpander"] details > summary {{
+[data-testid="stExpander"] details > summary,
+[data-testid="stExpander"] .streamlit-expanderHeader {{
   padding: 14px 18px !important;
   font-weight: 500 !important;
   font-family: {JP_FONT_STACK} !important;
   color: var(--text) !important;
   font-size: 14px !important;
+}}
+
+/* ★ 壊れた Material Symbols のアイコン text を完全に消す
+   (Streamlit が span/div で 'keyboard_arrow_right' という ligature 文字列を出す箇所) */
+[data-testid="stExpander"] summary svg,
+[data-testid="stExpander"] summary [data-testid*="Icon"],
+[data-testid="stExpander"] summary [data-testid*="icon"],
+[data-testid="stExpander"] summary [class*="material"],
+[data-testid="stExpander"] summary [class*="icon"],
+[data-testid="stExpander"] details > summary > span:first-child,
+[data-testid="stExpander"] details > summary > div > span:first-child,
+[data-testid="stExpander"] details > summary > div:first-child > span:first-child,
+[data-testid="stExpander"] .streamlit-expanderHeader svg,
+[data-testid="stExpander"] .streamlit-expanderHeader > span:first-child {{
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+  font-size: 0 !important;
+  overflow: hidden !important;
+}}
+
+/* 自前のシェブロンを ::before で描画 */
+[data-testid="stExpander"] summary::before,
+[data-testid="stExpander"] details > summary::before {{
+  content: '›';
+  display: inline-block;
+  margin-right: 12px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-soft);
+  font-weight: 300;
+  transform: rotate(0deg);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  vertical-align: -2px;
+}}
+[data-testid="stExpander"] details[open] > summary::before {{
+  transform: rotate(90deg);
 }}
 
 /* === プログレス === */
