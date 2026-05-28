@@ -454,7 +454,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    with st.expander("🗄️ ラックの管理", expanded=False):
+    with st.expander("[rack] 🗄️ ラックの管理", expanded=False):
         st.caption("現在： " + ", ".join(RACKS))
         new_rack = st.text_input("追加するラック名", max_chars=16, key="add_rack_in")
         rc1, rc2 = st.columns(2)
@@ -473,7 +473,7 @@ with st.sidebar:
                 if ok:
                     st.rerun()
 
-    with st.expander("📐 段の管理", expanded=False):
+    with st.expander("[tier] 📐 段の管理", expanded=False):
         st.caption("現在： " + ", ".join(TIERS))
         new_tier = st.text_input("追加する段（1〜2文字）", max_chars=2, key="add_tier_in").upper()
         tc1, tc2 = st.columns(2)
@@ -1284,7 +1284,7 @@ with tab_feed:
                     (int(today_logs.iloc[0]["log_id"]),))
             st.rerun()
 
-    with st.expander("📜 過去の給餌ログ（全件）"):
+    with st.expander("[history] 📜 過去の給餌ログ（全件）"):
         all_logs = fetch_df("SELECT * FROM feeding_logs ORDER BY fed_at DESC")
         st.dataframe(all_logs, use_container_width=True, hide_index=True)
         st.download_button(
@@ -1317,7 +1317,7 @@ with tab_trial:
     tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
 
     # --- 新規計画 ---
-    with st.expander("➕ 新規トライアルを計画する", expanded=False):
+    with st.expander("[new] ➕ 新規トライアルを計画する", expanded=False):
         with st.form("new_trial"):
             c1, c2 = st.columns(2)
             with c1:
@@ -1331,7 +1331,7 @@ with tab_trial:
                 src_f = st.selectbox("メス側の元水槽（戻し先）", [""] + tank_ids)
                 breed = st.selectbox("交配用水槽", [""] + tank_ids)
 
-            with st.expander("🏷️ 個別交配タグ（任意 / テスト機能）", expanded=False):
+            with st.expander("[tag] 🏷️ 個別交配タグ（任意 / テスト機能）", expanded=False):
                 st.caption(
                     "1匹だけ特別に追跡したい時に、このトライアル限定の仮名を付けられます。"
                     "未入力でOK。使わないようなら後で削除可。"
@@ -1436,7 +1436,7 @@ with tab_trial:
                             st.rerun()
 
                 # キャンセル
-                with st.expander("⛔ このトライアルを中止"):
+                with st.expander("[cancel] ⛔ このトライアルを中止"):
                     if st.button("中止する", key=f"cancel_{tid}"):
                         execute("UPDATE mating_trials SET status='中止' WHERE trial_id=?", (tid,))
                         st.rerun()
@@ -1773,7 +1773,7 @@ with tab_tank:
     # ----------------------------------------------------------------
     # CSV 一括インポート
     # ----------------------------------------------------------------
-    with st.expander("📤 CSV 一括インポート（240水槽まとめて登録）", expanded=False):
+    with st.expander("[import] 📤 CSV 一括インポート（240水槽まとめて登録）", expanded=False):
         st.markdown(
             "Excelで水槽リストを作って一気に登録できます。"
             "**同じ tank_id があれば上書き、無ければ新規登録** されます。"
@@ -1908,7 +1908,7 @@ with tab_tank:
                         st.success(f"🎉 {ok} 件を登録/更新しました" + (f"（失敗 {ng} 件）" if ng else ""))
                         st.rerun()
 
-    with st.expander("水槽を削除する"):
+    with st.expander("[delete] 🗑️ 水槽を削除する"):
         if not df.empty:
             del_id = st.selectbox("削除する水槽ID", df["tank_id"].tolist(), key="del_tank")
             if st.button("削除", type="primary", key="del_tank_btn"):
@@ -1934,7 +1934,7 @@ with tab_ind:
         "SELECT individual_id, lineage, male_count, female_count, unknown_count "
         "FROM individuals ORDER BY individual_id"
     )
-    with st.expander("📝 既存の群を編集（数や系統だけ更新）", expanded=False):
+    with st.expander("[edit] 📝 既存の群を編集（数や系統だけ更新）", expanded=False):
         if _all_groups.empty:
             st.info("まだ群が登録されていません")
         else:
@@ -2098,7 +2098,7 @@ with tab_ind:
     # ----------------------------------------------------------------
     # CSV 一括インポート
     # ----------------------------------------------------------------
-    with st.expander("📤 CSV 一括インポート（群をまとめて登録）", expanded=False):
+    with st.expander("[import] 📤 CSV 一括インポート（群をまとめて登録）", expanded=False):
         st.markdown(
             "Excel等で群リストを作って一気に登録できます。"
             "**同じ群IDがあれば上書き、無ければ新規追加**されます。"
@@ -2217,7 +2217,7 @@ with tab_ind:
                                    + (f"（失敗 {ng} 件）" if ng else ""))
                         st.rerun()
 
-    with st.expander("群を削除する"):
+    with st.expander("[delete] 🗑️ 群を削除する"):
         if not df_raw.empty:
             del_id = st.selectbox("削除する群ID", df_raw["individual_id"].tolist(), key="del_ind")
 
