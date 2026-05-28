@@ -20,6 +20,19 @@ FEED_WARN_HOURS = 2     # この時間を超えたら黄色
 FEED_ALERT_HOURS = 6    # この時間を超えたら赤
 TRIAL_STATUSES = ["計画中", "前日セット済み", "採卵済み", "戻し済み", "中止"]
 
+# 水槽の物理配置（あとから書き換えれば構造変更可）
+RACKS = ["A", "B", "C", "D"]         # ラック
+TIERS = [1, 2, 3, 4]                  # 段
+COLS = list(range(1, 16))             # 列 1〜15
+# → 計 len(RACKS) * len(TIERS) * len(COLS) = 240 水槽
+
+
+def format_location(rack, tier, col_no):
+    """場所コードを 'B-2-05' 形式に整形。値が欠けていれば空文字を返す。"""
+    if not rack or tier is None or col_no is None:
+        return ""
+    return f"{rack}-{int(tier)}-{int(col_no):02d}"
+
 
 # ============================================================
 # データベース
@@ -48,9 +61,17 @@ def init_db():
                 current_individual_id TEXT,
                 health_status         TEXT CHECK(health_status IN ('良好','要観察','隔離中')),
                 memo                  TEXT,
+                rack                  TEXT,
+                tier                  INTEGER,
+                col_no                INTEGER,
                 FOREIGN KEY (current_individual_id) REFERENCES individuals(individual_id)
             )
         """)
+        # マイグレーション: 旧スキーマに rack/tier/col_no が無ければ追加
+        tank_cols = [r[1] for r in c.execute("PRAGMA table_info(tanks)").fetchall()]
+        for col_def in [("rack", "TEXT"), ("tier", "INTEGER"), ("col_no", "INTEGER")]:
+            if col_def[0] not in tank_cols:
+                c.execute(f"ALTER TABLE tanks ADD COLUMN {col_def[0]} {col_def[1]}")
         c.execute("""
             CREATE TABLE IF NOT EXISTS spawning_records (
                 history_id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -596,36 +617,85 @@ with tab_analysis:
 # ============================================================
 with tab_tank:
     st.header("水槽管理")
+    st.caption(f"配置：{len(RACKS)}ラック × {len(TIERS)}段 × {len(COLS)}列 = "
+               f"最大 {len(RACKS)*len(TIERS)*len(COLS)} 水槽")
+
     ind_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
 
     with st.form("tank_form", clear_on_submit=True):
         st.subheader("水槽の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
-            tank_id = st.text_input("水槽ID（例: T-001）")
+            tank_id = st.text_input("水槽ID（例: T-001 / または場所コードと同じ B-2-05 でもOK）")
             current_ind = st.selectbox("現在の個体ID", [""] + ind_ids)
-        with c2:
             health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"])
+        with c2:
+            st.markdown("**場所**（ラック - 段 - 列）")
+            lc1, lc2, lc3 = st.columns(3)
+            rack = lc1.selectbox("ラック", [""] + RACKS, key="form_rack")
+            tier_str = lc2.selectbox("段", [""] + [str(t) for t in TIERS], key="form_tier")
+            col_str = lc3.selectbox("列", [""] + [f"{c:02d}" for c in COLS], key="form_col")
+            preview = format_location(
+                rack or None,
+                int(tier_str) if tier_str else None,
+                int(col_str) if col_str else None,
+            )
+            st.caption(f"場所コード：**{preview or '（未設定）'}**")
             memo = st.text_area("メモ", height=80)
+
         if st.form_submit_button("登録 / 更新", type="primary"):
             if not tank_id.strip():
                 st.error("水槽IDを入力してください")
             else:
                 execute(
-                    """INSERT INTO tanks (tank_id, current_individual_id, health_status, memo)
-                       VALUES (?, ?, ?, ?)
+                    """INSERT INTO tanks (tank_id, current_individual_id, health_status, memo, rack, tier, col_no)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(tank_id) DO UPDATE SET
                          current_individual_id=excluded.current_individual_id,
                          health_status=excluded.health_status,
-                         memo=excluded.memo""",
-                    (tank_id.strip(), current_ind or None, health, memo),
+                         memo=excluded.memo,
+                         rack=excluded.rack,
+                         tier=excluded.tier,
+                         col_no=excluded.col_no""",
+                    (tank_id.strip(), current_ind or None, health, memo,
+                     rack or None,
+                     int(tier_str) if tier_str else None,
+                     int(col_str) if col_str else None),
                 )
                 st.success(f"水槽 {tank_id} を登録/更新しました")
 
     st.divider()
     st.subheader("登録済み水槽")
-    df = fetch_df("SELECT * FROM tanks ORDER BY tank_id")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    df = fetch_df("SELECT * FROM tanks ORDER BY rack, tier, col_no, tank_id")
+    if not df.empty:
+        df["場所"] = df.apply(
+            lambda r: format_location(r["rack"], r["tier"], r["col_no"]), axis=1
+        )
+
+        # フィルタ
+        fc1, fc2, fc3 = st.columns(3)
+        f_rack = fc1.multiselect("ラックで絞り込み", RACKS, default=[])
+        f_tier = fc2.multiselect("段で絞り込み", TIERS, default=[])
+        f_health = fc3.multiselect("健康状態で絞り込み", ["良好", "要観察", "隔離中"], default=[])
+
+        view = df.copy()
+        if f_rack:
+            view = view[view["rack"].isin(f_rack)]
+        if f_tier:
+            view = view[view["tier"].isin(f_tier)]
+        if f_health:
+            view = view[view["health_status"].isin(f_health)]
+
+        st.caption(f"表示中: {len(view)} / 全 {len(df)} 水槽")
+        st.dataframe(
+            view[["tank_id", "場所", "rack", "tier", "col_no",
+                  "current_individual_id", "health_status", "memo"]],
+            use_container_width=True, hide_index=True,
+        )
+    else:
+        st.info("まだ水槽が登録されていません")
+
     st.download_button("📥 CSVダウンロード", to_csv_bytes(df), csv_filename("tanks"),
                        "text/csv", disabled=df.empty, key="dl_tanks")
 

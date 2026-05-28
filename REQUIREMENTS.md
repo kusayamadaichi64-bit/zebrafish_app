@@ -74,14 +74,27 @@
 
 ## 5. データモデル
 
-### 既存テーブル（変更なし）
+### 既存テーブル
 
 ```sql
 individuals (individual_id PK, birth_date, sex, lineage)
-tanks       (tank_id PK, current_individual_id, health_status, memo)
+tanks       (tank_id PK, current_individual_id, health_status, memo,
+             rack, tier, col_no)  -- 場所コード用に追加（v2.1）
 spawning_records (history_id PK, spawning_date, male_parent_id, female_parent_id,
                   egg_count, fertilization_rate)
 ```
+
+### 場所コード仕様（tanks.rack / tier / col_no）
+
+| 列 | 型 | 値 | 例 |
+|---|---|---|---|
+| rack    | TEXT    | A / B / C / D | B |
+| tier    | INTEGER | 1〜4          | 2 |
+| col_no  | INTEGER | 1〜15         | 5 |
+
+表示フォーマット：`{rack}-{tier}-{col_no:02d}` → 例 `B-2-05`
+最大水槽数：4 × 4 × 15 = **240**
+将来変更可能：定数 `RACKS / TIERS / COLS` を `app.py` 冒頭で定義し、ここを書き換えれば構造を変えられる。
 
 ### 新規テーブル
 
