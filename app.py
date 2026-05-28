@@ -414,6 +414,101 @@ def execute(query: str, params: tuple = ()) -> int:
         return cur.lastrowid
 
 
+def humanize_log(row) -> str:
+    """ログ行を自然な日本語に整形"""
+    cat = row.get("category", "") if hasattr(row, "get") else row["category"]
+    actor = row["actor"] if pd.notna(row.get("actor") if hasattr(row, "get") else row["actor"]) else None
+    target = row["target"] if pd.notna(row.get("target") if hasattr(row, "get") else row["target"]) else None
+    details = row["details"] if pd.notna(row.get("details") if hasattr(row, "get") else row["details"]) else None
+    actor_prefix = f"{actor} さんが " if actor else ""
+    tgt_str = str(target) if target else ""
+    det_str = str(details) if details else ""
+
+    if cat == "餌やり":
+        msg = f"{actor_prefix}餌やりしました"
+        if det_str and det_str != "全水槽給餌":
+            msg += f"（{det_str}）"
+    elif cat == "水槽登録/更新":
+        msg = f"{actor_prefix}水槽 {tgt_str} を登録/更新しました"
+        if det_str: msg += f"（{det_str}）"
+    elif cat == "水槽削除":
+        msg = f"{actor_prefix}水槽 {tgt_str} を削除しました"
+    elif cat == "群登録/更新":
+        msg = f"{actor_prefix}群 {tgt_str} を登録/更新しました"
+        if det_str: msg += f"（{det_str}）"
+    elif cat == "群更新":
+        msg = f"{actor_prefix}群 {tgt_str} を編集しました"
+        if det_str: msg += f"（{det_str}）"
+    elif cat == "群削除":
+        msg = f"{actor_prefix}群 {tgt_str} を削除しました"
+    elif cat == "トライアル計画":
+        msg = f"{actor_prefix}トライアル {tgt_str} を計画しました"
+        if det_str: msg += f" — {det_str}"
+    elif cat == "トライアル前日セット":
+        msg = f"{actor_prefix}トライアル {tgt_str} を前日セット完了にしました"
+    elif cat == "仕切り取り出し":
+        msg = f"{actor_prefix}トライアル {tgt_str} の仕切りを取り出しました"
+    elif cat == "採卵":
+        msg = f"{actor_prefix}トライアル {tgt_str} で採卵しました"
+        if det_str: msg += f"（{det_str}）"
+    elif cat == "トライアル戻し完了":
+        msg = f"{actor_prefix}トライアル {tgt_str} の戻しを完了しました"
+    elif cat == "トライアル中止":
+        msg = f"{actor_prefix}トライアル {tgt_str} を中止しました"
+    elif cat == "産卵成績(手入力)":
+        msg = f"{actor_prefix}産卵成績を手入力しました"
+        if det_str: msg += f" — {det_str}"
+    elif cat == "ログ削除":
+        msg = f"{actor_prefix}古いログを削除しました"
+        if det_str: msg += f"（{det_str}）"
+    else:
+        msg = f"{actor_prefix}{cat}"
+        if tgt_str: msg += f" {tgt_str}"
+        if det_str: msg += f" — {det_str}"
+    return msg
+
+
+def render_log_lines_html(df, limit=None):
+    """ログ DataFrame を HTML 文字列（テキスト行リスト）に整形"""
+    if df.empty:
+        return ""
+    if limit is not None:
+        df = df.head(limit)
+    parts = []
+    for _, row in df.iterrows():
+        ts = str(row["occurred_at"])
+        msg = humanize_log(row)
+        parts.append(
+            f'<div style="font-size:13px;padding:8px 14px;'
+            f'border-bottom:1px solid rgba(120,120,120,0.10);'
+            f'display:flex;gap:14px;align-items:baseline">'
+            f'<span style="color:#6E6E73;font-family:ui-monospace,Menlo,monospace;'
+            f'font-size:12px;white-space:nowrap;flex-shrink:0">{ts}</span>'
+            f'<span style="color:#1D1D1F">{msg}</span>'
+            f'</div>'
+        )
+    return ('<div style="background:rgba(255,255,255,0.55);'
+            'backdrop-filter:blur(20px);border-radius:14px;'
+            'border:1px solid rgba(255,255,255,0.6);overflow:hidden">'
+            + "".join(parts) + '</div>')
+
+
+def jump_to_tab(idx: int, label_jp: str = ""):
+    """JS でタブをクリックして遷移。session_state.jump_target を経由"""
+    import streamlit.components.v1 as components
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{
+            var tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+            if (tabs.length > {idx}) {{ tabs[{idx}].click(); }}
+        }}, 30);
+        </script>
+        """,
+        height=0,
+    )
+
+
 def log_action(category: str, target=None, details=None):
     """アクション履歴を1件追加。担当者は session_state.actor_name から取得。"""
     actor = None
@@ -1148,7 +1243,15 @@ st.markdown(hero_html, unsafe_allow_html=True)
 # ============================================================
 # 📊 ダッシュボード
 # ============================================================
+# タブインデックス（タブ並び順と一致させる）
+TAB_DASH, TAB_FEED, TAB_TRIAL, TAB_ANALYSIS, TAB_RACK, TAB_TANK, TAB_IND, TAB_SPAWN, TAB_LOG = range(9)
+
 with tab_dash:
+    # === タブジャンプ要求が積まれていたら、JSで該当タブをクリックして遷移 ===
+    if st.session_state.get("jump_target") is not None:
+        _idx = st.session_state.pop("jump_target")
+        jump_to_tab(int(_idx))
+
     df_tanks = fetch_df("SELECT * FROM tanks")
     df_inds = fetch_df("SELECT * FROM individuals")
     df_spawn = fetch_df("SELECT * FROM spawning_records")
@@ -1159,6 +1262,7 @@ with tab_dash:
         "SELECT * FROM feeding_logs WHERE substr(fed_at,1,10)=?", (today,)
     )
 
+    # === オーバービュー ===
     st.markdown('<div class="zf-section-label">📊 オーバービュー</div>', unsafe_allow_html=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("🪣 水槽数", len(df_tanks))
@@ -1171,8 +1275,24 @@ with tab_dash:
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
+    # === 最近のアクティビティ（上部に配置）===
+    st.markdown('<div class="zf-section-label">📔 最近のアクティビティ</div>', unsafe_allow_html=True)
+    recent_logs = fetch_df(
+        "SELECT occurred_at, category, actor, target, details "
+        "FROM activity_logs ORDER BY log_id DESC LIMIT 5"
+    )
+    if recent_logs.empty:
+        st.caption("ログがまだありません")
+    else:
+        st.markdown(render_log_lines_html(recent_logs), unsafe_allow_html=True)
+    if st.button("📔 ログタブで全件・絞り込み", key="nav_log", use_container_width=False):
+        st.session_state["jump_target"] = TAB_LOG
+        st.rerun()
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # === 今日の状況 ===
     st.markdown('<div class="zf-section-label">🍃 今日の状況</div>', unsafe_allow_html=True)
-    # 給餌サマリ
     left, right = st.columns(2)
     with left:
         st.subheader("🍚 本日の給餌状況")
@@ -1195,8 +1315,14 @@ with tab_dash:
         elif hrs_dash is not None and hrs_dash >= FEED_WARN_HOURS:
             st.warning(f"前回給餌から {hrs_dash:.1f} 時間経過")
 
+        if st.button("🍚 餌やりタブへ", key="nav_feed", type="primary",
+                     use_container_width=True):
+            st.session_state["jump_target"] = TAB_FEED
+            st.rerun()
+
     with right:
         st.subheader("⚠️ 注意が必要な水槽")
+        has_alerts = False
         if df_tanks.empty:
             st.info("水槽が登録されていません")
         else:
@@ -1205,16 +1331,23 @@ with tab_dash:
             if alert_df.empty and isolated_df.empty:
                 st.success("すべての水槽が良好です 🎉")
             if not alert_df.empty:
+                has_alerts = True
                 st.warning("【要観察】")
                 st.dataframe(alert_df[["tank_id", "current_individual_id", "memo"]],
                              use_container_width=True, hide_index=True)
             if not isolated_df.empty:
+                has_alerts = True
                 st.error("【隔離中】")
                 st.dataframe(isolated_df[["tank_id", "current_individual_id", "memo"]],
                              use_container_width=True, hide_index=True)
+        if has_alerts and st.button("🪣 水槽管理タブで対応", key="nav_tank",
+                                     use_container_width=True):
+            st.session_state["jump_target"] = TAB_TANK
+            st.rerun()
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
+    # === アクティブ・トライアル ===
     st.markdown('<div class="zf-section-label">💕 アクティブ・トライアル</div>', unsafe_allow_html=True)
     st.subheader("進行中の交配トライアル")
     if df_trials.empty:
@@ -1228,20 +1361,14 @@ with tab_dash:
                 active[["trial_id", "planned_date", "status", "male_id", "female_id", "breeding_tank_id"]],
                 use_container_width=True, hide_index=True,
             )
+    if st.button("💕 交配トライアルタブへ", key="nav_trial",
+                 use_container_width=False):
+        st.session_state["jump_target"] = TAB_TRIAL
+        st.rerun()
 
     st.markdown("<br/>", unsafe_allow_html=True)
-    st.markdown('<div class="zf-section-label">📔 最近のアクティビティ</div>', unsafe_allow_html=True)
-    recent_logs = fetch_df(
-        "SELECT occurred_at AS '時刻', category AS '種別', actor AS '担当', "
-        "target AS '対象', details AS '詳細' "
-        "FROM activity_logs ORDER BY log_id DESC LIMIT 5"
-    )
-    if recent_logs.empty:
-        st.caption("ログがまだありません")
-    else:
-        st.dataframe(recent_logs, use_container_width=True, hide_index=True)
 
-    st.markdown("<br/>", unsafe_allow_html=True)
+    # === データエクスポート ===
     st.markdown('<div class="zf-section-label">📥 データエクスポート</div>', unsafe_allow_html=True)
     st.subheader("CSV ダウンロード")
     d1, d2, d3, d4, d5 = st.columns(5)
@@ -2444,16 +2571,18 @@ with tab_log:
             ]
 
         st.caption(f"表示中: {len(view)} / 全 {len(log_df_all)} 件")
-        view_display = view.rename(columns={
-            "occurred_at": "時刻", "category": "種別", "actor": "担当",
-            "target": "対象", "details": "詳細",
-        })[["時刻", "種別", "担当", "対象", "詳細"]]
-        st.dataframe(view_display, use_container_width=True, hide_index=True)
 
+        # テキスト形式で表示
+        st.markdown(render_log_lines_html(view), unsafe_allow_html=True)
+
+        # CSVは生データで提供
         st.download_button(
-            "📥 CSVダウンロード", to_csv_bytes(view_display),
+            "📥 CSVダウンロード（生データ）", to_csv_bytes(view.rename(columns={
+                "occurred_at": "時刻", "category": "種別", "actor": "担当",
+                "target": "対象", "details": "詳細",
+            })[["時刻", "種別", "担当", "対象", "詳細"]]),
             csv_filename("activity_logs"), "text/csv",
-            disabled=view_display.empty, key="dl_logs",
+            disabled=view.empty, key="dl_logs",
         )
 
         with st.expander("[stats] 📊 種別別の件数"):
