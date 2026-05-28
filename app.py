@@ -34,6 +34,52 @@ def format_location(rack, tier, col_no):
     return f"{rack}-{int(tier)}-{int(col_no):02d}"
 
 
+HEALTH_COLOR = {
+    "良好":   "#B8DDB6",
+    "要観察": "#F5D7A1",
+    "隔離中": "#E8B4A8",
+}
+EMPTY_COLOR = "#F5F2EC"
+
+
+def render_rack_html(rack_letter, df_sub):
+    """1つのラックを 4段×15列 のHTMLテーブルとして組み立てる。"""
+    by_loc = {}
+    for r in df_sub.itertuples():
+        if pd.notna(r.tier) and pd.notna(r.col_no):
+            by_loc[(int(r.tier), int(r.col_no))] = r
+
+    parts = [f'<div style="margin:0 0 1.5rem 0">'
+             f'<h4 style="margin:0 0 8px 0">🏠 ラック {rack_letter}</h4>'
+             f'<table style="border-collapse:separate;border-spacing:3px;font-size:11px;">']
+    # ヘッダ列番号
+    parts.append('<tr><th style="width:36px"></th>')
+    for c in COLS:
+        parts.append(f'<th style="padding:2px;color:#888;font-weight:500;width:48px">{c:02d}</th>')
+    parts.append('</tr>')
+
+    for t in TIERS:
+        parts.append(f'<tr><th style="padding:4px;color:#888;text-align:right">段{t}</th>')
+        for c in COLS:
+            tank = by_loc.get((t, c))
+            if tank is None:
+                bg, label, tip = EMPTY_COLOR, "—", "未登録"
+            else:
+                bg = HEALTH_COLOR.get(tank.health_status, "#E8DDC8")
+                tid = str(tank.tank_id)
+                label = tid if len(tid) <= 6 else tid[:5] + "…"
+                ind = tank.current_individual_id if pd.notna(tank.current_individual_id) else "-"
+                tip = f"ID:{tid} / 状態:{tank.health_status or '-'} / 個体:{ind}"
+            parts.append(
+                f'<td title="{tip}" style="background:{bg};padding:8px 4px;'
+                f'text-align:center;border-radius:6px;color:#3C3530;'
+                f'font-weight:500;cursor:default">{label}</td>'
+            )
+        parts.append('</tr>')
+    parts.append('</table></div>')
+    return "".join(parts)
+
+
 # ============================================================
 # データベース
 # ============================================================
@@ -201,12 +247,14 @@ st.markdown(
 st.title("🐟 ゼブラフィッシュ水槽管理")
 st.caption(f"今日は {date.today().strftime('%Y年%m月%d日')}")
 
-tab_dash, tab_feed, tab_trial, tab_analysis, tab_tank, tab_ind, tab_spawn = st.tabs(
+(tab_dash, tab_feed, tab_trial, tab_analysis, tab_rack,
+ tab_tank, tab_ind, tab_spawn) = st.tabs(
     [
         "📊 ダッシュボード",
         "🍚 餌やり",
         "💕 交配トライアル",
         "📈 成績分析",
+        "📐 棚ビュー",
         "🪣 水槽管理",
         "🐠 個体管理",
         "🥚 産卵成績",
@@ -613,6 +661,47 @@ with tab_analysis:
 
 
 # ============================================================
+# 📐 棚ビュー
+# ============================================================
+with tab_rack:
+    st.header("棚ビュー")
+    st.caption(
+        f"{len(RACKS)} ラック × {len(TIERS)} 段 × {len(COLS)} 列 ＝ 最大 "
+        f"{len(RACKS)*len(TIERS)*len(COLS)} 水槽。色は健康状態を示します。"
+    )
+
+    # 凡例
+    legend = (
+        '<div style="display:flex;gap:14px;align-items:center;margin:8px 0 16px 0;font-size:13px">'
+        f'<span style="background:{HEALTH_COLOR["良好"]};padding:3px 12px;border-radius:6px">良好</span>'
+        f'<span style="background:{HEALTH_COLOR["要観察"]};padding:3px 12px;border-radius:6px">要観察</span>'
+        f'<span style="background:{HEALTH_COLOR["隔離中"]};padding:3px 12px;border-radius:6px">隔離中</span>'
+        f'<span style="background:{EMPTY_COLOR};padding:3px 12px;border-radius:6px;color:#888">未登録</span>'
+        '</div>'
+    )
+    st.markdown(legend, unsafe_allow_html=True)
+
+    df_all = fetch_df("SELECT * FROM tanks")
+
+    # サマリ
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("登録済み水槽", len(df_all))
+    sc2.metric("良好", int((df_all["health_status"] == "良好").sum()) if not df_all.empty else 0)
+    sc3.metric("要観察", int((df_all["health_status"] == "要観察").sum()) if not df_all.empty else 0)
+    sc4.metric("隔離中", int((df_all["health_status"] == "隔離中").sum()) if not df_all.empty else 0)
+
+    st.divider()
+
+    # 4ラックを縦並び表示
+    if df_all.empty:
+        st.info("水槽がまだ登録されていません。「水槽管理」タブから登録するか、CSV一括インポートを使ってください。")
+    else:
+        for rack in RACKS:
+            sub = df_all[df_all["rack"] == rack]
+            st.markdown(render_rack_html(rack, sub), unsafe_allow_html=True)
+
+
+# ============================================================
 # 🪣 水槽管理
 # ============================================================
 with tab_tank:
@@ -698,6 +787,147 @@ with tab_tank:
 
     st.download_button("📥 CSVダウンロード", to_csv_bytes(df), csv_filename("tanks"),
                        "text/csv", disabled=df.empty, key="dl_tanks")
+
+    # ----------------------------------------------------------------
+    # CSV 一括インポート
+    # ----------------------------------------------------------------
+    with st.expander("📤 CSV 一括インポート（240水槽まとめて登録）", expanded=False):
+        st.markdown(
+            "Excelで水槽リストを作って一気に登録できます。"
+            "**同じ tank_id があれば上書き、無ければ新規登録** されます。"
+        )
+
+        # テンプレート
+        template_rows = []
+        for r in RACKS[:1]:
+            for t in TIERS[:2]:
+                for c in COLS[:2]:
+                    template_rows.append({
+                        "tank_id": f"{r}-{t}-{c:02d}",
+                        "rack": r, "tier": t, "col_no": c,
+                        "health_status": "良好",
+                        "current_individual_id": "",
+                        "memo": "",
+                    })
+        template_df = pd.DataFrame(
+            template_rows,
+            columns=["tank_id", "rack", "tier", "col_no",
+                     "health_status", "current_individual_id", "memo"],
+        )
+        st.download_button(
+            "📄 テンプレートCSVをダウンロード",
+            to_csv_bytes(template_df),
+            "tank_template.csv",
+            "text/csv",
+            key="dl_template",
+        )
+        st.caption(
+            "必須列：tank_id, rack, tier, col_no　／　任意列：health_status, current_individual_id, memo"
+        )
+
+        uploaded = st.file_uploader("CSVファイルを選択", type=["csv"], key="csv_upload")
+        if uploaded is not None:
+            try:
+                # BOM付きでも普通でも読めるよう utf-8-sig
+                up_df = pd.read_csv(uploaded, encoding="utf-8-sig", dtype=str).fillna("")
+            except Exception as e:
+                st.error(f"CSV読み込みエラー：{e}")
+                up_df = None
+
+            if up_df is not None:
+                st.success(f"📂 {len(up_df)} 行を読み込みました")
+                st.dataframe(up_df.head(20), use_container_width=True, hide_index=True)
+                if len(up_df) > 20:
+                    st.caption(f"...残り {len(up_df) - 20} 行はインポート時に処理します")
+
+                # 検証
+                errors = []
+                warnings_list = []
+
+                required_cols = ["tank_id", "rack", "tier", "col_no"]
+                missing = [c for c in required_cols if c not in up_df.columns]
+                if missing:
+                    errors.append(f"必須列が不足しています: {missing}")
+
+                if not errors:
+                    bad_rows = []
+                    for i, row in up_df.iterrows():
+                        rownum = i + 2  # 1行目はヘッダなので+2
+                        if not str(row["tank_id"]).strip():
+                            bad_rows.append(f"行{rownum}: tank_id が空")
+                            continue
+                        rack_v = str(row["rack"]).strip()
+                        if rack_v and rack_v not in RACKS:
+                            bad_rows.append(f"行{rownum}: rack='{rack_v}' は {RACKS} のいずれかにしてください")
+                        if str(row["tier"]).strip():
+                            try:
+                                tv = int(float(row["tier"]))
+                                if tv not in TIERS:
+                                    bad_rows.append(f"行{rownum}: tier={tv} は {TIERS} のいずれかにしてください")
+                            except ValueError:
+                                bad_rows.append(f"行{rownum}: tier='{row['tier']}' が数値ではありません")
+                        if str(row["col_no"]).strip():
+                            try:
+                                cv = int(float(row["col_no"]))
+                                if cv not in COLS:
+                                    bad_rows.append(f"行{rownum}: col_no={cv} は 1〜{len(COLS)} の範囲外")
+                            except ValueError:
+                                bad_rows.append(f"行{rownum}: col_no='{row['col_no']}' が数値ではありません")
+                        if "health_status" in up_df.columns:
+                            hs = str(row["health_status"]).strip()
+                            if hs and hs not in ["良好", "要観察", "隔離中"]:
+                                bad_rows.append(f"行{rownum}: health_status='{hs}' は [良好/要観察/隔離中] のいずれか")
+
+                    if bad_rows:
+                        errors.extend(bad_rows[:20])
+                        if len(bad_rows) > 20:
+                            errors.append(f"...他に {len(bad_rows) - 20} 件のエラー")
+
+                    # 重複 tank_id
+                    dups = up_df["tank_id"][up_df["tank_id"].duplicated()].unique().tolist()
+                    if len(dups):
+                        warnings_list.append(f"CSV内で重複する tank_id: {dups[:10]}")
+
+                if errors:
+                    st.error("❌ 検証エラーがあります（修正してから再アップロードしてください）")
+                    for e in errors:
+                        st.write(f"- {e}")
+                else:
+                    for w in warnings_list:
+                        st.warning(w)
+                    st.info(f"✅ 検証OK：{len(up_df)} 行を登録/更新します")
+                    if st.button("⬆️ インポート実行", type="primary", key="csv_import_btn"):
+                        ok, ng = 0, 0
+                        with get_conn() as conn:
+                            for _, row in up_df.iterrows():
+                                try:
+                                    rack_v = str(row.get("rack", "")).strip() or None
+                                    tier_v = int(float(row["tier"])) if str(row.get("tier", "")).strip() else None
+                                    col_v = int(float(row["col_no"])) if str(row.get("col_no", "")).strip() else None
+                                    hs_v = str(row.get("health_status", "")).strip() or "良好"
+                                    ind_v = str(row.get("current_individual_id", "")).strip() or None
+                                    memo_v = str(row.get("memo", "")).strip() or None
+                                    conn.execute(
+                                        """INSERT INTO tanks
+                                           (tank_id, current_individual_id, health_status, memo,
+                                            rack, tier, col_no)
+                                           VALUES (?, ?, ?, ?, ?, ?, ?)
+                                           ON CONFLICT(tank_id) DO UPDATE SET
+                                             current_individual_id=excluded.current_individual_id,
+                                             health_status=excluded.health_status,
+                                             memo=excluded.memo,
+                                             rack=excluded.rack,
+                                             tier=excluded.tier,
+                                             col_no=excluded.col_no""",
+                                        (str(row["tank_id"]).strip(), ind_v, hs_v, memo_v,
+                                         rack_v, tier_v, col_v),
+                                    )
+                                    ok += 1
+                                except Exception:
+                                    ng += 1
+                            conn.commit()
+                        st.success(f"🎉 {ok} 件を登録/更新しました" + (f"（失敗 {ng} 件）" if ng else ""))
+                        st.rerun()
 
     with st.expander("水槽を削除する"):
         if not df.empty:
