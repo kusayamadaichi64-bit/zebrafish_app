@@ -1507,7 +1507,7 @@ with tab_tank:
         if int(r["male_count"] or 0) > 0:    parts.append(f"♂{int(r['male_count'])}")
         if int(r["female_count"] or 0) > 0:  parts.append(f"♀{int(r['female_count'])}")
         if int(r["unknown_count"] or 0) > 0: parts.append(f"？{int(r['unknown_count'])}")
-        suffix = f"  ({' / '.join(parts)})" if parts else ""
+        suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
         lin = f"  ・{r['lineage']}" if r["lineage"] else ""
         return f"{gid}{suffix}{lin}"
 
@@ -1587,7 +1587,7 @@ with tab_tank:
             if (r.get("group_m") or 0) > 0: parts.append(f"♂{int(r['group_m'])}")
             if (r.get("group_f") or 0) > 0: parts.append(f"♀{int(r['group_f'])}")
             if (r.get("group_u") or 0) > 0: parts.append(f"？{int(r['group_u'])}")
-            suffix = f" ({' / '.join(parts)})" if parts else ""
+            suffix = f" ({' / '.join(parts)})" if parts else " (空)"
             return f"{gid}{suffix}"
         df["入っている群"] = df.apply(fmt_group_row, axis=1)
 
@@ -1788,12 +1788,14 @@ with tab_ind:
     with pc1:
         rack_letter = st.selectbox("段", RACKS, key="ind_rack",
                                     help="サイドバーから段の追加・削除ができます")
-    # 同じ (段, 日) の既存番号から次の空き番号を計算
+    # 同じ (段, 日) の既存番号から「最小の空き番号」を計算（ギャップ埋め）
     _today_str = today_jst().strftime("%y%m%d")
-    _today_seqs = [int(i[1:4]) for i in _existing_ids
-                   if len(i) == 10 and i[0] == rack_letter
-                   and i[4:10] == _today_str and i[1:4].isdigit()]
-    _suggested_seq = (max(_today_seqs) + 1) if _today_seqs else 1
+    _today_seqs = set(int(i[1:4]) for i in _existing_ids
+                       if len(i) == 10 and i[0] == rack_letter
+                       and i[4:10] == _today_str and i[1:4].isdigit())
+    _suggested_seq = 1
+    while _suggested_seq in _today_seqs:
+        _suggested_seq += 1
     with pc2:
         seq_no = st.number_input(
             "番号（001〜999）", min_value=1, max_value=999,
@@ -1837,45 +1839,174 @@ with tab_ind:
 
         if st.form_submit_button("登録 / 更新", type="primary"):
             if total == 0:
-                st.error("匹数を1匹以上入力してください")
+                sex_v = None
+            elif male_cnt > 0 and female_cnt == 0 and unknown_cnt == 0:
+                sex_v = "オス"
+            elif female_cnt > 0 and male_cnt == 0 and unknown_cnt == 0:
+                sex_v = "メス"
             else:
-                if male_cnt > 0 and female_cnt == 0 and unknown_cnt == 0:
-                    sex_v = "オス"
-                elif female_cnt > 0 and male_cnt == 0 and unknown_cnt == 0:
-                    sex_v = "メス"
-                else:
-                    sex_v = "混合"
-                execute(
-                    """INSERT INTO individuals
-                       (individual_id, birth_date, sex, lineage,
-                        male_count, female_count, unknown_count)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(individual_id) DO UPDATE SET
-                         birth_date=excluded.birth_date,
-                         sex=excluded.sex,
-                         lineage=excluded.lineage,
-                         male_count=excluded.male_count,
-                         female_count=excluded.female_count,
-                         unknown_count=excluded.unknown_count""",
-                    (auto_id, entry_date.isoformat(), sex_v, lineage,
-                     int(male_cnt), int(female_cnt), int(unknown_cnt)),
-                )
-                st.success(f"群 {auto_id}（合計 {total} 匹）を登録/更新しました")
-                st.rerun()
+                sex_v = "混合"
+            execute(
+                """INSERT INTO individuals
+                   (individual_id, birth_date, sex, lineage,
+                    male_count, female_count, unknown_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(individual_id) DO UPDATE SET
+                     birth_date=excluded.birth_date,
+                     sex=excluded.sex,
+                     lineage=excluded.lineage,
+                     male_count=excluded.male_count,
+                     female_count=excluded.female_count,
+                     unknown_count=excluded.unknown_count""",
+                (auto_id, entry_date.isoformat(), sex_v, lineage,
+                 int(male_cnt), int(female_cnt), int(unknown_cnt)),
+            )
+            label = "空" if total == 0 else f"合計 {total} 匹"
+            st.success(f"群 {auto_id}（{label}）を登録/更新しました")
+            st.rerun()
 
     st.divider()
     st.subheader("登録済みの群")
     df = fetch_df(
-        "SELECT individual_id AS 群ID, lineage AS 系統, birth_date AS 発生日, "
-        "male_count AS 'オス', female_count AS 'メス', unknown_count AS '不明', "
-        "(COALESCE(male_count,0)+COALESCE(female_count,0)+COALESCE(unknown_count,0)) AS '合計' "
-        "FROM individuals ORDER BY individual_id"
+        "SELECT individual_id AS 群ID, lineage AS 系統, birth_date AS 入力日, "
+        "COALESCE(male_count,0) AS 'オス', "
+        "COALESCE(female_count,0) AS 'メス', "
+        "COALESCE(unknown_count,0) AS '不明', "
+        "(COALESCE(male_count,0)+COALESCE(female_count,0)+COALESCE(unknown_count,0)) AS '_total' "
+        "FROM individuals ORDER BY 群ID"
     )
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    if not df.empty:
+        df["状態"] = df["_total"].apply(lambda x: "空" if int(x) == 0 else f"{int(x)} 匹")
+        df_view = df[["群ID", "系統", "入力日", "オス", "メス", "不明", "状態"]]
+    else:
+        df_view = df
+    st.dataframe(df_view, use_container_width=True, hide_index=True)
 
     df_raw = fetch_df("SELECT * FROM individuals ORDER BY individual_id")
     st.download_button("📥 CSVダウンロード", to_csv_bytes(df_raw), csv_filename("individuals"),
                        "text/csv", disabled=df_raw.empty, key="dl_individuals")
+
+    # ----------------------------------------------------------------
+    # CSV 一括インポート
+    # ----------------------------------------------------------------
+    with st.expander("📤 CSV 一括インポート（群をまとめて登録）", expanded=False):
+        st.markdown(
+            "Excel等で群リストを作って一気に登録できます。"
+            "**同じ群IDがあれば上書き、無ければ新規追加**されます。"
+            "登録順は気にせず、欠番のIDを後から入れてもOK（自動で順番に並びます）。"
+        )
+
+        # テンプレート
+        _t = today_jst().strftime("%y%m%d")
+        template_df_ind = pd.DataFrame(
+            [
+                {"individual_id": f"A001{_t}", "lineage": "AB", "birth_date": today_jst().isoformat(),
+                 "male_count": 5, "female_count": 3, "unknown_count": 0},
+                {"individual_id": f"A002{_t}", "lineage": "AB", "birth_date": today_jst().isoformat(),
+                 "male_count": 0, "female_count": 0, "unknown_count": 0},
+                {"individual_id": f"B001{_t}", "lineage": "TU", "birth_date": today_jst().isoformat(),
+                 "male_count": 0, "female_count": 8, "unknown_count": 0},
+            ],
+            columns=["individual_id", "lineage", "birth_date",
+                     "male_count", "female_count", "unknown_count"],
+        )
+        st.download_button(
+            "📄 テンプレートCSVをダウンロード",
+            to_csv_bytes(template_df_ind),
+            "individuals_template.csv",
+            "text/csv",
+            key="dl_ind_template",
+        )
+        st.caption(
+            "必須列：individual_id　／　任意列：lineage, birth_date(YYYY-MM-DD), "
+            "male_count, female_count, unknown_count（未指定は0扱い）"
+        )
+
+        uploaded_ind = st.file_uploader("CSVファイルを選択", type=["csv"], key="csv_ind_upload")
+        if uploaded_ind is not None:
+            try:
+                up = pd.read_csv(uploaded_ind, encoding="utf-8-sig", dtype=str).fillna("")
+            except Exception as e:
+                st.error(f"CSV読み込みエラー：{e}")
+                up = None
+
+            if up is not None:
+                st.success(f"📂 {len(up)} 行を読み込みました")
+                st.dataframe(up.head(20), use_container_width=True, hide_index=True)
+                if len(up) > 20:
+                    st.caption(f"...残り {len(up) - 20} 行はインポート時に処理します")
+
+                errors = []
+                if "individual_id" not in up.columns:
+                    errors.append("必須列 'individual_id' が無いCSVです")
+                else:
+                    bad = []
+                    for i, row in up.iterrows():
+                        rownum = i + 2
+                        iid = str(row["individual_id"]).strip()
+                        if not iid:
+                            bad.append(f"行{rownum}: individual_id が空")
+                            continue
+                        # 数値列の検証
+                        for col in ["male_count", "female_count", "unknown_count"]:
+                            if col in up.columns:
+                                v = str(row[col]).strip()
+                                if v:
+                                    try:
+                                        n = int(float(v))
+                                        if n < 0:
+                                            bad.append(f"行{rownum}: {col}={n} は0以上にしてください")
+                                    except ValueError:
+                                        bad.append(f"行{rownum}: {col}='{v}' が数値ではありません")
+                    if bad:
+                        errors.extend(bad[:20])
+                        if len(bad) > 20:
+                            errors.append(f"...他に {len(bad) - 20} 件のエラー")
+
+                if errors:
+                    st.error("❌ 検証エラーがあります")
+                    for e in errors:
+                        st.write(f"- {e}")
+                else:
+                    st.info(f"✅ 検証OK：{len(up)} 行を登録/更新します")
+                    if st.button("⬆️ インポート実行", type="primary", key="csv_ind_import_btn"):
+                        ok, ng = 0, 0
+                        with get_conn() as conn:
+                            for _, row in up.iterrows():
+                                try:
+                                    iid = str(row["individual_id"]).strip()
+                                    lin = str(row.get("lineage", "")).strip() or None
+                                    bd = str(row.get("birth_date", "")).strip() or None
+                                    mc = int(float(row.get("male_count", "") or 0))
+                                    fc = int(float(row.get("female_count", "") or 0))
+                                    uc = int(float(row.get("unknown_count", "") or 0))
+                                    total_n = mc + fc + uc
+                                    if total_n == 0:
+                                        sex = None
+                                    elif mc > 0 and fc == 0 and uc == 0: sex = "オス"
+                                    elif fc > 0 and mc == 0 and uc == 0: sex = "メス"
+                                    else: sex = "混合"
+                                    conn.execute(
+                                        """INSERT INTO individuals
+                                           (individual_id, birth_date, sex, lineage,
+                                            male_count, female_count, unknown_count)
+                                           VALUES (?, ?, ?, ?, ?, ?, ?)
+                                           ON CONFLICT(individual_id) DO UPDATE SET
+                                             birth_date=excluded.birth_date,
+                                             sex=excluded.sex,
+                                             lineage=excluded.lineage,
+                                             male_count=excluded.male_count,
+                                             female_count=excluded.female_count,
+                                             unknown_count=excluded.unknown_count""",
+                                        (iid, bd, sex, lin, mc, fc, uc),
+                                    )
+                                    ok += 1
+                                except Exception:
+                                    ng += 1
+                            conn.commit()
+                        st.success(f"🎉 {ok} 件を登録/更新しました"
+                                   + (f"（失敗 {ng} 件）" if ng else ""))
+                        st.rerun()
 
     with st.expander("群を削除する"):
         if not df_raw.empty:
