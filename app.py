@@ -294,6 +294,32 @@ button, summary, input, textarea, select, label, p, span, div, li, td, th,
   -moz-osx-font-smoothing: grayscale;
 }}
 
+/* === Material Icons / Symbols は絶対にアイコンフォントを保つ === */
+.material-icons, .material-icons-outlined, .material-icons-round,
+.material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp,
+[class*="material-symbols"], [class*="material-icons"],
+i.material-icons, i[class*="material"],
+span.material-icons, span[class*="material-symbols"],
+[data-testid="stIconMaterial"], [data-testid="stIconMaterial"] *,
+.stApp .material-symbols-outlined, .stApp .material-symbols-rounded,
+.stApp [class*="material-symbols"] {{
+  font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
+               'Material Icons', 'Material Icons Outlined' !important;
+  font-feature-settings: 'liga' !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+  -webkit-font-feature-settings: 'liga' !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  word-wrap: normal !important;
+  white-space: nowrap !important;
+  direction: ltr !important;
+  display: inline-block !important;
+}}
+
+/* SVGアイコンを使う場合の保険 */
+svg {{ font-family: inherit; }}
+
 .stApp {{ color: var(--text); }}
 
 h1, h2, h3, h4, h5,
