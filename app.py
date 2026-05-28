@@ -1668,43 +1668,51 @@ with tab_ind:
 
     # 既存の番号一覧（重複防止用ヒント）
     _existing_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
-    # 入力日今日基準で次の番号候補を計算（同じ日付の最大番号+1）
     _today_str = today_jst().strftime("%y%m%d")
     _today_seqs = [int(i[:3]) for i in _existing_ids
                    if len(i) == 9 and i[3:9] == _today_str and i[:3].isdigit()]
     _suggested_seq = (max(_today_seqs) + 1) if _today_seqs else 1
 
-    with st.form("ind_form", clear_on_submit=True):
-        st.subheader("群の登録 / 更新")
+    st.subheader("群の登録 / 更新")
+
+    # === ライブプレビュー部 (form の外 = 入力するたびに即時更新) ===
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        seq_no = st.number_input(
+            "番号（001〜999）", min_value=1, max_value=999,
+            value=int(_suggested_seq), step=1, key="ind_seq",
+            help="この日に何番目に登録するか。次の空き番号を初期表示しています。",
+        )
+    with pc2:
+        entry_date = st.date_input("入力日", value=today_jst(), key="ind_date")
+
+    auto_id = f"{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
+    already = auto_id in _existing_ids
+    overwrite_note = (
+        '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
+        if already else ''
+    )
+    st.markdown(
+        "<div style='margin:6px 0 14px 0;padding:12px 16px;"
+        "background:rgba(255,255,255,0.7);border:1px solid #E5E5EA;"
+        "border-radius:14px;font-family:ui-monospace,Menlo,monospace;"
+        f"font-size:16px;color:#1D1D1F'>"
+        f"群ID（自動生成）：<b style='font-size:18px'>{auto_id}</b>{overwrite_note}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # === 残りの入力は form の中（送信時にまとめて処理） ===
+    with st.form("ind_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            seq_no = st.number_input(
-                "番号（001〜999）", min_value=1, max_value=999, value=int(_suggested_seq), step=1,
-                help="この日に何番目に登録するか。同じ日の重複を避けるため次の空き番号を初期表示しています。",
-            )
-            entry_date = st.date_input("入力日", value=today_jst())
-            lineage = st.text_input("系統名（例: AB, TU, WIK）")
-
-            auto_id = f"{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
-            already = auto_id in _existing_ids
-            overwrite_note = (
-                '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
-                if already else ''
-            )
-            st.markdown(
-                "<div style='margin-top:6px;padding:10px 14px;"
-                "background:rgba(255,255,255,0.6);border:1px solid #E5E5EA;"
-                "border-radius:12px;font-family:ui-monospace,Menlo,monospace;"
-                f"font-size:15px;color:#1D1D1F'>群ID（自動生成）：<b>{auto_id}</b>{overwrite_note}</div>",
-                unsafe_allow_html=True,
-            )
+            lineage = st.text_input("系統名（例: AB, TU, WIK）", key="ind_lineage")
         with c2:
             st.markdown("**匹数（性別ごと）**")
             mc1, mc2, mc3 = st.columns(3)
-            male_cnt = mc1.number_input("♂ オス", min_value=0, step=1, value=0)
-            female_cnt = mc2.number_input("♀ メス", min_value=0, step=1, value=0)
-            unknown_cnt = mc3.number_input("？ 不明", min_value=0, step=1, value=0,
-                                            help="性別未判定の若い魚など")
+            male_cnt = mc1.number_input("♂ オス", min_value=0, step=1, value=0, key="ind_m")
+            female_cnt = mc2.number_input("♀ メス", min_value=0, step=1, value=0, key="ind_f")
+            unknown_cnt = mc3.number_input("？ 不明", min_value=0, step=1, value=0, key="ind_u",
+                                           help="性別未判定の若い魚など")
             total = int(male_cnt) + int(female_cnt) + int(unknown_cnt)
             st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
                         f"合計 <b style='color:#1D1D1F;font-size:18px'>{total}</b> 匹</div>",
