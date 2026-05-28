@@ -6,12 +6,28 @@
 """
 
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
+
+# === タイムゾーン: 日本標準時で固定 ===
+# Streamlit Cloud のサーバは UTC なので、必ずこのヘルパを使う
+JST = timezone(timedelta(hours=9))
+
+def now_jst() -> datetime:
+    """JST タイムゾーン付きの現在時刻"""
+    return datetime.now(JST)
+
+def now_naive_jst() -> datetime:
+    """DB 保存用のナイーブ JST 時刻（比較を簡単にする）"""
+    return now_jst().replace(tzinfo=None)
+
+def today_jst() -> date:
+    """今日の日付（JST）"""
+    return now_jst().date()
 
 DB_PATH = Path(__file__).parent / "zebrafish.db"
 
@@ -203,7 +219,7 @@ def csv_filename(prefix: str) -> str:
 
 
 def now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_naive_jst().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def hours_since(iso_str: Optional[str]) -> Optional[float]:
@@ -213,7 +229,7 @@ def hours_since(iso_str: Optional[str]) -> Optional[float]:
         t = datetime.strptime(iso_str, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         return None
-    return (datetime.now() - t).total_seconds() / 3600
+    return (now_naive_jst() - t).total_seconds() / 3600
 
 
 # ============================================================
@@ -246,7 +262,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("🌱 v2.2")
-    st.caption(date.today().strftime("%Y年 %m月 %d日"))
+    st.caption(today_jst().strftime("%Y年 %m月 %d日"))
 
 
 # --- デザインシステム CSS（Liquid Glass / Apple Minimal） ---
@@ -832,23 +848,24 @@ if st.session_state.mobile_mode:
     st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 
-# --- ヒーロー ---
-weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][date.today().weekday()]
-_hour = datetime.now().hour
-if _hour < 5:
-    _greeting = "おつかれさまです"
-elif _hour < 11:
+# --- ヒーロー（JST基準） ---
+_today_jst = today_jst()
+weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][_today_jst.weekday()]
+_hour = now_jst().hour
+if 5 <= _hour < 11:
     _greeting = "おはようございます"
-elif _hour < 17:
+elif 11 <= _hour < 18:
     _greeting = "こんにちは"
-else:
+elif 18 <= _hour < 23:
     _greeting = "こんばんは"
+else:
+    _greeting = "おつかれさまです"
 
 hero_html = f"""
 <div class="zf-hero">
   <div class="eyebrow">ZEBRAFISH MANAGEMENT</div>
   <h1>{_greeting} 🐟</h1>
-  <p class="sub">{date.today().strftime("%Y年 %m月 %d日")}（{weekday_jp}）・餌やり、交配、成績まで1画面で</p>
+  <p class="sub">{_today_jst.strftime("%Y年 %m月 %d日")}（{weekday_jp}）・餌やり、交配、成績まで1画面で</p>
 </div>
 """
 st.markdown(hero_html, unsafe_allow_html=True)
@@ -877,7 +894,7 @@ with tab_dash:
     df_spawn = fetch_df("SELECT * FROM spawning_records")
     df_trials = fetch_df("SELECT * FROM mating_trials")
 
-    today = date.today().isoformat()
+    today = today_jst().isoformat()
     df_feed_today = fetch_df(
         "SELECT * FROM feeding_logs WHERE substr(fed_at,1,10)=?", (today,)
     )
@@ -980,7 +997,7 @@ with tab_feed:
     st.header("餌やりログ")
     st.caption(f"目標：1日 {FEEDS_PER_DAY} 回（全水槽に一斉に給餌）")
 
-    today = date.today().isoformat()
+    today = today_jst().isoformat()
     today_logs = fetch_df(
         "SELECT log_id, fed_at, memo FROM feeding_logs "
         "WHERE substr(fed_at,1,10)=? ORDER BY fed_at DESC", (today,),
@@ -1064,7 +1081,7 @@ with tab_trial:
         with st.form("new_trial"):
             c1, c2 = st.columns(2)
             with c1:
-                planned = st.date_input("採卵予定日", value=date.today() + timedelta(days=1))
+                planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1))
                 male = st.selectbox("オス", [""] + males)
                 female = st.selectbox("メス", [""] + females)
             with c2:
@@ -1554,7 +1571,7 @@ with tab_ind:
         c1, c2 = st.columns(2)
         with c1:
             ind_id = st.text_input("個体ID（例: F-001）")
-            birth = st.date_input("生まれた日付", value=date.today())
+            birth = st.date_input("生まれた日付", value=today_jst())
         with c2:
             sex = st.selectbox("性別", ["オス", "メス", "混合"])
             lineage = st.text_input("系統名（例: AB, TU, WIK）")
@@ -1603,7 +1620,7 @@ with tab_spawn:
         st.subheader("手入力で追加")
         c1, c2, c3 = st.columns(3)
         with c1:
-            sdate = st.date_input("産卵日", value=date.today())
+            sdate = st.date_input("産卵日", value=today_jst())
             male = st.selectbox("オス親ID", [""] + males)
         with c2:
             female = st.selectbox("メス親ID", [""] + females)
