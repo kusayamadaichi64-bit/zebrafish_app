@@ -282,45 +282,59 @@ BASE_CSS = f"""
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }}
 
-/* === グローバル：日本語フォントを全テキスト要素に強制適用（文字化け根絶） === */
-html, body, .stApp,
-.stApp *,
-[data-testid="stSidebar"], [data-testid="stSidebar"] *,
-button, summary, input, textarea, select, label, p, span, div, li, td, th,
-[data-baseweb], [data-baseweb] *,
-[role="tab"], [role="button"], [role="dialog"] {{
+/* === グローバル：日本語フォント（テキスト要素のみ。* を使わずアイコンを巻き込まない） === */
+html, body, .stApp {{
   font-family: {JP_FONT_STACK} !important;
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }}
 
-/* === Material Icons / Symbols は絶対にアイコンフォントを保つ === */
-.material-icons, .material-icons-outlined, .material-icons-round,
-.material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp,
-[class*="material-symbols"], [class*="material-icons"],
-i.material-icons, i[class*="material"],
-span.material-icons, span[class*="material-symbols"],
-[data-testid="stIconMaterial"], [data-testid="stIconMaterial"] *,
-.stApp .material-symbols-outlined, .stApp .material-symbols-rounded,
-.stApp [class*="material-symbols"] {{
-  font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
-               'Material Icons', 'Material Icons Outlined' !important;
-  font-feature-settings: 'liga' !important;
-  font-weight: normal !important;
-  font-style: normal !important;
-  -webkit-font-feature-settings: 'liga' !important;
-  text-transform: none !important;
-  letter-spacing: normal !important;
-  word-wrap: normal !important;
-  white-space: nowrap !important;
-  direction: ltr !important;
-  display: inline-block !important;
+/* テキストを持つ Streamlit/HTML 要素を名指し */
+.stApp p, .stApp li, .stApp td, .stApp th,
+.stApp input, .stApp textarea, .stApp select, .stApp label,
+.stApp button, .stApp summary,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li,
+.stApp [data-testid="stMarkdownContainer"] span,
+.stApp [data-testid="stMarkdownContainer"] div,
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stCaptionContainer"] *,
+.stApp [data-testid="stMetricLabel"],
+.stApp [data-testid="stMetricValue"],
+.stApp [data-testid="stMetricDelta"],
+.stApp [data-baseweb="tab"],
+.stApp [data-baseweb="tab-list"],
+.stApp [data-baseweb="select"] *,
+.stApp [data-baseweb="input"] *,
+.stApp [data-baseweb="popover"] *,
+.stApp [data-baseweb="menu"] *,
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] button,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {{
+  font-family: {JP_FONT_STACK} !important;
 }}
 
-/* SVGアイコンを使う場合の保険 */
-svg {{ font-family: inherit; }}
+/* expander のタイトルテキスト（子供のラベル部分のみ） */
+.stApp [data-testid="stExpander"] summary p,
+.stApp [data-testid="stExpander"] summary span:last-child,
+.stApp [data-testid="stExpander"] details > summary > div,
+.stApp .streamlit-expanderHeader,
+.stApp .streamlit-expanderHeader p {{
+  font-family: {JP_FONT_STACK} !important;
+}}
 
-.stApp {{ color: var(--text); }}
+/* スパン内のテキスト（アイコンでないもの）の保険：
+   material/icon クラスを含まないspanだけに適用 */
+.stApp span:not([class*="material"]):not([class*="icon"]):not([class*="Icon"]):not(.notranslate) {{
+  font-family: {JP_FONT_STACK} !important;
+}}
 
 h1, h2, h3, h4, h5,
 [data-testid="stMarkdownContainer"] h1,
@@ -709,8 +723,16 @@ hr {{
 
 MOBILE_CSS = f"""
 <style>
-/* モバイル時も日本語フォントを再宣言（文字化け防止） */
-html, body, .stApp, [class*="css"], [class*="st-"], [data-testid] {{
+/* モバイル時のフォント再宣言（テキスト要素のみ・アイコンは除外） */
+html, body, .stApp {{
+  font-family: {JP_FONT_STACK} !important;
+}}
+.stApp p, .stApp li, .stApp button, .stApp summary,
+.stApp input, .stApp textarea, .stApp select, .stApp label,
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] *,
+.stApp [data-baseweb="tab"],
+.stApp span:not([class*="material"]):not([class*="icon"]):not([class*="Icon"]) {{
   font-family: {JP_FONT_STACK} !important;
 }}
 h1, h2, h3, h4, h5 {{
