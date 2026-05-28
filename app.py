@@ -36,18 +36,21 @@ FEED_WARN_HOURS = 2     # この時間を超えたら黄色
 FEED_ALERT_HOURS = 6    # この時間を超えたら赤
 TRIAL_STATUSES = ["計画中", "前日セット済み", "採卵済み", "戻し済み", "中止"]
 
-# 水槽の物理配置
-# RACKS は app_settings.racks から動的にロード（UI から追加可）
-DEFAULT_RACKS = ["A", "B", "C", "D"]
-TIERS = [1, 2, 3, 4]                  # 段
-COLS = list(range(1, 16))             # 列 1〜15
+# 水槽の物理配置（UI / app_settings から動的に変更可）
+DEFAULT_RACKS = ["wild", "genom1", "genom2", "genom3"]   # ラック名
+DEFAULT_TIERS = ["A", "B", "C", "D"]                      # 段（文字）
+COLS = list(range(1, 16))                                 # 列 1〜15
 
 
 def format_location(rack, tier, col_no):
-    """場所コードを 'B-2-05' 形式に整形。値が欠けていれば空文字を返す。"""
-    if not rack or tier is None or col_no is None:
+    """場所コードを 'wild-A-01' 形式に整形。値が欠けていれば空文字を返す。"""
+    if not rack or tier is None or tier == "" or col_no is None:
         return ""
-    return f"{rack}-{int(tier)}-{int(col_no):02d}"
+    try:
+        col_str = f"{int(col_no):02d}"
+    except (ValueError, TypeError):
+        return ""
+    return f"{rack}-{tier}-{col_str}"
 
 
 HEALTH_COLOR = {
@@ -58,18 +61,20 @@ HEALTH_COLOR = {
 EMPTY_COLOR = "#F5F2EC"
 
 
-def render_rack_html(rack_letter, df_sub):
-    """1つのラックを 4段×15列 のHTMLテーブルとして組み立てる。"""
+def render_rack_html(rack_name, df_sub):
+    """1つのラックを 段×列 のHTMLテーブルとして組み立てる。"""
     by_loc = {}
     for r in df_sub.itertuples():
         if pd.notna(r.tier) and pd.notna(r.col_no):
-            by_loc[(int(r.tier), int(r.col_no))] = r
+            try:
+                by_loc[(str(r.tier), int(r.col_no))] = r
+            except (ValueError, TypeError):
+                continue
 
     parts = [f'<div style="margin:0 0 1.5rem 0">'
-             f'<h4 style="margin:0 0 8px 0">🏠 ラック {rack_letter}</h4>'
+             f'<h4 style="margin:0 0 8px 0">🏠 ラック {rack_name}</h4>'
              f'<table style="border-collapse:separate;border-spacing:3px;font-size:11px;">']
-    # ヘッダ列番号
-    parts.append('<tr><th style="width:36px"></th>')
+    parts.append('<tr><th style="width:48px"></th>')
     for c in COLS:
         parts.append(f'<th style="padding:2px;color:#888;font-weight:500;width:48px">{c:02d}</th>')
     parts.append('</tr>')
@@ -77,7 +82,7 @@ def render_rack_html(rack_letter, df_sub):
     for t in TIERS:
         parts.append(f'<tr><th style="padding:4px;color:#888;text-align:right">段{t}</th>')
         for c in COLS:
-            tank = by_loc.get((t, c))
+            tank = by_loc.get((str(t), c))
             if tank is None:
                 bg, label, tip = EMPTY_COLOR, "—", "未登録"
             else:
@@ -281,30 +286,105 @@ def load_racks():
     return items or DEFAULT_RACKS[:]
 
 
-def add_rack(letter):
+def load_tiers():
+    raw = get_setting("tiers", ",".join(DEFAULT_TIERS))
+    items = [s.strip() for s in raw.split(",") if s.strip()]
+    return items or DEFAULT_TIERS[:]
+
+
+def add_rack(name):
+    name = name.strip()
+    if not name or len(name) > 16:
+        return False, "ラック名は1〜16文字で入力してください"
+    current = load_racks()
+    if name in current:
+        return False, f"ラック {name} は既に存在します"
+    current.append(name)
+    set_setting("racks", ",".join(current))
+    return True, f"ラック {name} を追加しました"
+
+
+def remove_rack(name):
+    current = load_racks()
+    if name not in current:
+        return False, "存在しないラックです"
+    if len(current) <= 1:
+        return False, "ラックは最低1つ必要です"
+    current.remove(name)
+    set_setting("racks", ",".join(current))
+    return True, f"ラック {name} を削除しました"
+
+
+def add_tier(letter):
     letter = letter.strip().upper()
     if not letter or not letter.isalpha() or len(letter) > 2:
         return False, "段は1〜2文字のアルファベットで入力してください"
-    current = load_racks()
+    current = load_tiers()
     if letter in current:
         return False, f"段 {letter} は既に存在します"
     current.append(letter)
-    set_setting("racks", ",".join(current))
+    set_setting("tiers", ",".join(current))
     return True, f"段 {letter} を追加しました"
 
 
-def remove_rack(letter):
-    current = load_racks()
+def remove_tier(letter):
+    current = load_tiers()
     if letter not in current:
         return False, "存在しない段です"
     if len(current) <= 1:
         return False, "段は最低1つ必要です"
     current.remove(letter)
-    set_setting("racks", ",".join(current))
+    set_setting("tiers", ",".join(current))
     return True, f"段 {letter} を削除しました"
 
 
+# === v3 マイグレーション（一度だけ実行） ===
+# ラック A → wild、段 1 → A 等にリネーム
+if get_setting("migration_v3_done") != "1":
+    _migrate_conn = sqlite3.connect(DB_PATH)
+    try:
+        _migrate_conn.execute("PRAGMA foreign_keys = OFF")
+        # 設定を新しいデフォルトに更新
+        for k, v in [("racks", ",".join(DEFAULT_RACKS)),
+                     ("tiers", ",".join(DEFAULT_TIERS))]:
+            _migrate_conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (k, v),
+            )
+        # 既存の tank データを移行: rack='A' & tier∈{1..4} を持つ行
+        _rack_map = {"A": "wild", "B": "genom1", "C": "genom2", "D": "genom3"}
+        _tier_map = {1: "A", 2: "B", 3: "C", 4: "D"}
+        _rows = _migrate_conn.execute(
+            "SELECT tank_id, rack, tier, col_no FROM tanks "
+            "WHERE rack IS NOT NULL AND tier IS NOT NULL"
+        ).fetchall()
+        for _old_id, _r, _t, _c in _rows:
+            try:
+                _t_int = int(_t)
+            except (ValueError, TypeError):
+                continue
+            _new_rack = _rack_map.get(str(_r).upper())
+            _new_tier = _tier_map.get(_t_int)
+            if _new_rack is None or _new_tier is None:
+                continue
+            _new_id = (f"{_new_rack}-{_new_tier}-{int(_c):02d}"
+                       if _c is not None else _old_id)
+            _migrate_conn.execute(
+                "UPDATE tanks SET tank_id=?, rack=?, tier=? WHERE tank_id=?",
+                (_new_id, _new_rack, _new_tier, _old_id),
+            )
+        _migrate_conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('migration_v3_done','1') "
+            "ON CONFLICT(key) DO UPDATE SET value='1'"
+        )
+        _migrate_conn.commit()
+    finally:
+        _migrate_conn.close()
+
+
 RACKS = load_racks()
+TIERS = load_tiers()
 # 計 len(RACKS) * len(TIERS) * len(COLS) 水槽
 
 
@@ -374,21 +454,40 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    with st.expander("🪜 段の管理", expanded=False):
-        st.caption(f"現在の段：{', '.join(RACKS)}")
-        new_rack = st.text_input("追加する段（1〜2文字）", max_chars=2, key="add_rack_in").upper()
-        ac1, ac2 = st.columns(2)
-        if ac1.button("➕ 追加", key="add_rack_btn", use_container_width=True):
+    with st.expander("🗄️ ラックの管理", expanded=False):
+        st.caption("現在： " + ", ".join(RACKS))
+        new_rack = st.text_input("追加するラック名", max_chars=16, key="add_rack_in")
+        rc1, rc2 = st.columns(2)
+        if rc1.button("➕ 追加", key="add_rack_btn", use_container_width=True):
             if new_rack:
                 ok, msg = add_rack(new_rack)
                 (st.success if ok else st.error)(msg)
                 if ok:
                     st.rerun()
         if len(RACKS) > 1:
-            rm_rack = ac2.selectbox("削除", RACKS, key="rm_rack_sel",
+            rm_rack = rc2.selectbox("削除", RACKS, key="rm_rack_sel",
                                      label_visibility="collapsed")
-            if ac2.button("🗑️ 削除", key="rm_rack_btn", use_container_width=True):
+            if rc2.button("🗑️ 削除", key="rm_rack_btn", use_container_width=True):
                 ok, msg = remove_rack(rm_rack)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+
+    with st.expander("📐 段の管理", expanded=False):
+        st.caption("現在： " + ", ".join(TIERS))
+        new_tier = st.text_input("追加する段（1〜2文字）", max_chars=2, key="add_tier_in").upper()
+        tc1, tc2 = st.columns(2)
+        if tc1.button("➕ 追加", key="add_tier_btn", use_container_width=True):
+            if new_tier:
+                ok, msg = add_tier(new_tier)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+        if len(TIERS) > 1:
+            rm_tier = tc2.selectbox("削除", TIERS, key="rm_tier_sel",
+                                     label_visibility="collapsed")
+            if tc2.button("🗑️ 削除", key="rm_tier_btn", use_container_width=True):
+                ok, msg = remove_tier(rm_tier)
                 (st.success if ok else st.error)(msg)
                 if ok:
                     st.rerun()
@@ -1517,12 +1616,12 @@ with tab_tank:
     st.markdown("**場所**（ラック - 段 - 列）")
     lc1, lc2, lc3 = st.columns(3)
     rack = lc1.selectbox("ラック", [""] + RACKS, key="form_rack")
-    tier_str = lc2.selectbox("段", [""] + [str(t) for t in TIERS], key="form_tier")
+    tier_str = lc2.selectbox("段", [""] + TIERS, key="form_tier")
     col_str = lc3.selectbox("列", [""] + [f"{c:02d}" for c in COLS], key="form_col")
 
     tank_id_auto = format_location(
         rack or None,
-        int(tier_str) if tier_str else None,
+        tier_str or None,
         int(col_str) if col_str else None,
     )
     _existing_tanks = fetch_df("SELECT tank_id FROM tanks")["tank_id"].tolist()
@@ -1568,7 +1667,7 @@ with tab_tank:
                          tier=excluded.tier,
                          col_no=excluded.col_no""",
                     (tank_id_auto, current_ind or None, health, memo,
-                     rack, int(tier_str), int(col_str)),
+                     rack, tier_str, int(col_str)),
                 )
                 st.success(f"水槽 {tank_id_auto} を登録/更新しました")
                 st.rerun()
@@ -1703,12 +1802,9 @@ with tab_tank:
                         if rack_v and rack_v not in RACKS:
                             bad_rows.append(f"行{rownum}: rack='{rack_v}' は {RACKS} のいずれかにしてください")
                         if str(row["tier"]).strip():
-                            try:
-                                tv = int(float(row["tier"]))
-                                if tv not in TIERS:
-                                    bad_rows.append(f"行{rownum}: tier={tv} は {TIERS} のいずれかにしてください")
-                            except ValueError:
-                                bad_rows.append(f"行{rownum}: tier='{row['tier']}' が数値ではありません")
+                            tv = str(row["tier"]).strip()
+                            if tv not in TIERS:
+                                bad_rows.append(f"行{rownum}: tier='{tv}' は {TIERS} のいずれかにしてください")
                         if str(row["col_no"]).strip():
                             try:
                                 cv = int(float(row["col_no"]))
@@ -1745,7 +1841,7 @@ with tab_tank:
                             for _, row in up_df.iterrows():
                                 try:
                                     rack_v = str(row.get("rack", "")).strip() or None
-                                    tier_v = int(float(row["tier"])) if str(row.get("tier", "")).strip() else None
+                                    tier_v = str(row.get("tier", "")).strip() or None
                                     col_v = int(float(row["col_no"])) if str(row.get("col_no", "")).strip() else None
                                     hs_v = str(row.get("health_status", "")).strip() or "良好"
                                     ind_v = str(row.get("current_individual_id", "")).strip() or None
@@ -1792,6 +1888,67 @@ with tab_ind:
 
     # 既存IDの一覧（重複防止用）
     _existing_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
+
+    # === 既存の群を編集（プルダウンから選んで数だけ変更） ===
+    _all_groups = fetch_df(
+        "SELECT individual_id, lineage, male_count, female_count, unknown_count "
+        "FROM individuals ORDER BY individual_id"
+    )
+    with st.expander("📝 既存の群を編集（数や系統だけ更新）", expanded=False):
+        if _all_groups.empty:
+            st.info("まだ群が登録されていません")
+        else:
+            def _fmt_edit(gid):
+                r = _all_groups[_all_groups["individual_id"] == gid].iloc[0]
+                m, f, u = int(r["male_count"] or 0), int(r["female_count"] or 0), int(r["unknown_count"] or 0)
+                tot = m + f + u
+                tail = "空" if tot == 0 else f"♂{m} / ♀{f} / ？{u}"
+                lin = f"・{r['lineage']}" if r["lineage"] else ""
+                return f"{gid}  ({tail}) {lin}"
+
+            edit_id = st.selectbox(
+                "編集する群", _all_groups["individual_id"].tolist(),
+                format_func=_fmt_edit, key="edit_group_sel",
+            )
+            cur_row = _all_groups[_all_groups["individual_id"] == edit_id].iloc[0]
+
+            with st.form("edit_group_form", clear_on_submit=False):
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    e_lineage = st.text_input(
+                        "系統名", value=cur_row["lineage"] or "",
+                        key=f"e_lin_{edit_id}",
+                    )
+                with ec2:
+                    ecm1, ecm2, ecm3 = st.columns(3)
+                    e_m = ecm1.number_input("♂ オス", min_value=0, step=1,
+                                              value=int(cur_row["male_count"] or 0),
+                                              key=f"e_m_{edit_id}")
+                    e_f = ecm2.number_input("♀ メス", min_value=0, step=1,
+                                              value=int(cur_row["female_count"] or 0),
+                                              key=f"e_f_{edit_id}")
+                    e_u = ecm3.number_input("？ 不明", min_value=0, step=1,
+                                              value=int(cur_row["unknown_count"] or 0),
+                                              key=f"e_u_{edit_id}")
+                    e_tot = int(e_m) + int(e_f) + int(e_u)
+                    e_tot_label = "空" if e_tot == 0 else f"{e_tot} 匹"
+                    st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
+                                f"合計 <b style='color:#1D1D1F;font-size:18px'>{e_tot_label}</b></div>",
+                                unsafe_allow_html=True)
+
+                if st.form_submit_button("💾 更新", type="primary"):
+                    if e_tot == 0:
+                        sex_v = None
+                    elif e_m > 0 and e_f == 0 and e_u == 0: sex_v = "オス"
+                    elif e_f > 0 and e_m == 0 and e_u == 0: sex_v = "メス"
+                    else: sex_v = "混合"
+                    execute(
+                        "UPDATE individuals SET male_count=?, female_count=?, "
+                        "unknown_count=?, lineage=?, sex=? WHERE individual_id=?",
+                        (int(e_m), int(e_f), int(e_u), e_lineage or None, sex_v, edit_id),
+                    )
+                    st.success(f"群 {edit_id} を更新しました")
+                    st.rerun()
 
     st.subheader("群の登録 / 更新")
 
