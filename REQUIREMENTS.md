@@ -35,10 +35,11 @@
 | 項目 | 内容 |
 |---|---|
 | 目的 | 1日4回の給餌を確実に記録、やり忘れ防止 |
-| 主操作 | 「今あげた」ボタンを水槽ごとにタップ → 自動で現在時刻を記録 |
-| 表示 | 水槽ごとに「最終給餌から◯時間◯分」「本日の給餌回数 n/4」 |
-| データ | `feeding_logs` テーブル（log_id, tank_id, fed_at, memo） |
-| 受入基準 | ・スマホでもボタンが押しやすい大きさ<br>・最後の給餌から2時間以上経った水槽は黄色／6時間超は赤で警告 |
+| 前提 | 給餌は **全水槽に一斉**に行う運用（水槽ごとの記録は不要） |
+| 主操作 | 「🍚 全水槽に餌をあげた」ボタン1つをタップ → 自動で現在時刻を記録 |
+| 表示 | ・本日の給餌回数 `n / 4`<br>・前回給餌の時刻と経過時間 |
+| データ | `feeding_logs` テーブル（log_id, fed_at, memo） |
+| 受入基準 | ・スマホでもボタンが押しやすい大きさ<br>・前回給餌から2時間超で黄色／6時間超で赤の警告<br>・本日の進捗バー表示 |
 
 ### F2. ペア成功率分析
 
@@ -85,13 +86,11 @@ spawning_records (history_id PK, spawning_date, male_parent_id, female_parent_id
 ### 新規テーブル
 
 ```sql
--- F1: 給餌ログ
+-- F1: 給餌ログ（全水槽一斉のため tank_id 不要）
 feeding_logs (
     log_id  INTEGER PRIMARY KEY AUTOINCREMENT,
-    tank_id TEXT NOT NULL,
     fed_at  TEXT NOT NULL,          -- ISO datetime
-    memo    TEXT,
-    FOREIGN KEY (tank_id) REFERENCES tanks(tank_id)
+    memo    TEXT
 )
 
 -- F3: 交配トライアル

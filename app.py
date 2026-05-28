@@ -66,12 +66,24 @@ def init_db():
         c.execute("""
             CREATE TABLE IF NOT EXISTS feeding_logs (
                 log_id  INTEGER PRIMARY KEY AUTOINCREMENT,
-                tank_id TEXT NOT NULL,
                 fed_at  TEXT NOT NULL,
-                memo    TEXT,
-                FOREIGN KEY (tank_id) REFERENCES tanks(tank_id)
+                memo    TEXT
             )
         """)
+        # マイグレーション: 旧スキーマ（tank_id列あり）から新スキーマへ
+        cols = [r[1] for r in c.execute("PRAGMA table_info(feeding_logs)").fetchall()]
+        if "tank_id" in cols:
+            c.execute("""
+                CREATE TABLE feeding_logs_new (
+                    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fed_at TEXT NOT NULL,
+                    memo   TEXT
+                )
+            """)
+            c.execute("INSERT INTO feeding_logs_new (log_id, fed_at, memo) "
+                      "SELECT log_id, fed_at, memo FROM feeding_logs")
+            c.execute("DROP TABLE feeding_logs")
+            c.execute("ALTER TABLE feeding_logs_new RENAME TO feeding_logs")
         c.execute("""
             CREATE TABLE IF NOT EXISTS mating_trials (
                 trial_id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,19 +224,24 @@ with tab_dash:
     left, right = st.columns(2)
     with left:
         st.subheader("🍚 本日の給餌状況")
-        if df_tanks.empty:
-            st.info("水槽が登録されていません")
-        else:
-            feed_count_by_tank = df_feed_today.groupby("tank_id").size().to_dict() if not df_feed_today.empty else {}
-            total_feeds = len(df_feed_today)
-            target_total = len(df_tanks) * FEEDS_PER_DAY
-            st.progress(min(total_feeds / target_total, 1.0) if target_total else 0,
-                        text=f"本日 {total_feeds} / {target_total} 回（目標：水槽あたり{FEEDS_PER_DAY}回）")
+        n_today = len(df_feed_today)
+        last_log = fetch_df("SELECT fed_at FROM feeding_logs ORDER BY fed_at DESC LIMIT 1")
+        last_fed_dash = last_log.iloc[0]["fed_at"] if not last_log.empty else None
+        hrs_dash = hours_since(last_fed_dash)
 
-            for tid in df_tanks["tank_id"].tolist():
-                n = feed_count_by_tank.get(tid, 0)
-                mark = "✅" if n >= FEEDS_PER_DAY else "🍚" * n + "⬜" * (FEEDS_PER_DAY - n)
-                st.write(f"**{tid}** {mark}　{n}/{FEEDS_PER_DAY}")
+        st.progress(min(n_today / FEEDS_PER_DAY, 1.0),
+                    text=f"本日 {n_today} / {FEEDS_PER_DAY} 回")
+
+        c_a, c_b = st.columns(2)
+        c_a.metric("給餌回数", f"{n_today} / {FEEDS_PER_DAY}")
+        c_b.metric("前回給餌",
+                   last_fed_dash.split(" ")[1][:5] if last_fed_dash else "—",
+                   f"{hrs_dash:.1f}時間前" if hrs_dash is not None else None)
+
+        if hrs_dash is not None and hrs_dash >= FEED_ALERT_HOURS:
+            st.error(f"⚠️ 前回給餌から {hrs_dash:.1f} 時間経過しています")
+        elif hrs_dash is not None and hrs_dash >= FEED_WARN_HOURS:
+            st.warning(f"前回給餌から {hrs_dash:.1f} 時間経過")
 
     with right:
         st.subheader("⚠️ 注意が必要な水槽")
@@ -281,85 +298,78 @@ with tab_dash:
 
 
 # ============================================================
-# 🍚 餌やり
+# 🍚 餌やり（全水槽一斉）
 # ============================================================
 with tab_feed:
     st.header("餌やりログ")
-    st.caption(f"目標：1日 {FEEDS_PER_DAY} 回 / 水槽")
+    st.caption(f"目標：1日 {FEEDS_PER_DAY} 回（全水槽に一斉に給餌）")
 
-    tanks = fetch_df("SELECT tank_id, current_individual_id, health_status FROM tanks ORDER BY tank_id")
+    today = date.today().isoformat()
+    today_logs = fetch_df(
+        "SELECT log_id, fed_at, memo FROM feeding_logs "
+        "WHERE substr(fed_at,1,10)=? ORDER BY fed_at DESC", (today,),
+    )
+    last_log = fetch_df("SELECT fed_at FROM feeding_logs ORDER BY fed_at DESC LIMIT 1")
 
-    if tanks.empty:
-        st.info("先に「水槽管理」タブで水槽を登録してください")
-    else:
-        today = date.today().isoformat()
-        feeds_today = fetch_df(
-            "SELECT tank_id, COUNT(*) AS cnt, MAX(fed_at) AS last_fed "
-            "FROM feeding_logs WHERE substr(fed_at,1,10)=? GROUP BY tank_id",
-            (today,),
-        )
-        last_any = fetch_df(
-            "SELECT tank_id, MAX(fed_at) AS last_fed FROM feeding_logs GROUP BY tank_id"
-        )
-        last_map = dict(zip(last_any["tank_id"], last_any["last_fed"])) if not last_any.empty else {}
-        today_map = {row.tank_id: (row.cnt, row.last_fed) for row in feeds_today.itertuples()} if not feeds_today.empty else {}
+    count_today = len(today_logs)
+    last_fed = last_log.iloc[0]["fed_at"] if not last_log.empty else None
+    hrs = hours_since(last_fed)
 
-        st.subheader("水槽ごとに記録")
-        for _, row in tanks.iterrows():
-            tid = row["tank_id"]
-            count_today, last_fed = today_map.get(tid, (0, None))
-            last_any_fed = last_map.get(tid)
-            hrs = hours_since(last_any_fed)
-
-            if hrs is None:
-                status_html = '<span class="feed-warn">未記録</span>'
-            elif hrs >= FEED_ALERT_HOURS:
-                status_html = f'<span class="feed-alert">最終給餌から {hrs:.1f} 時間（要給餌）</span>'
-            elif hrs >= FEED_WARN_HOURS:
-                status_html = f'<span class="feed-warn">最終給餌から {hrs:.1f} 時間</span>'
-            else:
-                status_html = f'<span class="feed-ok">最終給餌から {hrs:.1f} 時間</span>'
-
-            c1, c2, c3 = st.columns([2, 4, 2])
-            with c1:
-                st.markdown(f"### 🪣 {tid}")
-                st.caption(f"個体: {row['current_individual_id'] or '-'} / 状態: {row['health_status'] or '-'}")
-            with c2:
-                st.markdown(f"本日：**{count_today} / {FEEDS_PER_DAY} 回**", help="今日この水槽にあげた回数")
-                st.markdown(status_html, unsafe_allow_html=True)
-            with c3:
-                if st.button("🍚 今あげた", key=f"feed_{tid}", use_container_width=True):
-                    execute(
-                        "INSERT INTO feeding_logs (tank_id, fed_at, memo) VALUES (?, ?, ?)",
-                        (tid, now_iso(), None),
-                    )
-                    st.rerun()
-            st.divider()
-
-        st.subheader("本日の給餌ログ")
-        today_logs = fetch_df(
-            "SELECT log_id, tank_id, fed_at, memo FROM feeding_logs "
-            "WHERE substr(fed_at,1,10)=? ORDER BY fed_at DESC", (today,),
-        )
-        if today_logs.empty:
-            st.info("本日の記録はまだありません")
+    # メイン表示
+    m1, m2, m3 = st.columns([2, 2, 3])
+    m1.metric("🍚 本日の給餌回数", f"{count_today} / {FEEDS_PER_DAY}")
+    m2.metric("🕒 前回給餌", last_fed.split(" ")[1][:5] if last_fed else "—")
+    with m3:
+        if hrs is None:
+            st.markdown('<h4 class="feed-warn">まだ給餌記録がありません</h4>', unsafe_allow_html=True)
+        elif hrs >= FEED_ALERT_HOURS:
+            st.markdown(f'<h4 class="feed-alert">前回から {hrs:.1f} 時間（要給餌）</h4>', unsafe_allow_html=True)
+        elif hrs >= FEED_WARN_HOURS:
+            st.markdown(f'<h4 class="feed-warn">前回から {hrs:.1f} 時間</h4>', unsafe_allow_html=True)
         else:
-            st.dataframe(today_logs, use_container_width=True, hide_index=True)
-            if st.button("⬅️ 最新の記録を1件取り消す"):
-                execute("DELETE FROM feeding_logs WHERE log_id=?", (int(today_logs.iloc[0]["log_id"]),))
-                st.rerun()
+            st.markdown(f'<h4 class="feed-ok">前回から {hrs:.1f} 時間</h4>', unsafe_allow_html=True)
 
-        with st.expander("📜 過去の給餌ログ（全件）"):
-            all_logs = fetch_df("SELECT * FROM feeding_logs ORDER BY fed_at DESC")
-            st.dataframe(all_logs, use_container_width=True, hide_index=True)
-            st.download_button(
-                "📥 CSVダウンロード",
-                to_csv_bytes(all_logs),
-                csv_filename("feeding_logs"),
-                "text/csv",
-                disabled=all_logs.empty,
-                key="dl_feeds",
-            )
+    st.progress(min(count_today / FEEDS_PER_DAY, 1.0),
+                text=f"本日の進捗 {count_today}/{FEEDS_PER_DAY}")
+
+    st.divider()
+
+    # 巨大ボタン
+    if count_today >= FEEDS_PER_DAY:
+        st.success(f"✅ 本日の目標 {FEEDS_PER_DAY} 回を達成しました！")
+    btn_label = "🍚 全水槽に餌をあげた" if count_today < FEEDS_PER_DAY else "🍚 追加で記録する"
+    memo = st.text_input("メモ（任意）", placeholder="例: 朝の分 / 担当者名 など")
+    if st.button(btn_label, type="primary", use_container_width=True):
+        execute(
+            "INSERT INTO feeding_logs (fed_at, memo) VALUES (?, ?)",
+            (now_iso(), memo or None),
+        )
+        st.rerun()
+
+    st.divider()
+
+    # 本日のログ
+    st.subheader("本日の給餌ログ")
+    if today_logs.empty:
+        st.info("本日の記録はまだありません")
+    else:
+        st.dataframe(today_logs, use_container_width=True, hide_index=True)
+        if st.button("⬅️ 直近の1件を取り消す"):
+            execute("DELETE FROM feeding_logs WHERE log_id=?",
+                    (int(today_logs.iloc[0]["log_id"]),))
+            st.rerun()
+
+    with st.expander("📜 過去の給餌ログ（全件）"):
+        all_logs = fetch_df("SELECT * FROM feeding_logs ORDER BY fed_at DESC")
+        st.dataframe(all_logs, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 CSVダウンロード",
+            to_csv_bytes(all_logs),
+            csv_filename("feeding_logs"),
+            "text/csv",
+            disabled=all_logs.empty,
+            key="dl_feeds",
+        )
 
 
 # ============================================================
