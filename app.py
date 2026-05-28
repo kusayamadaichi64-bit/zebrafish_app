@@ -227,6 +227,17 @@ def init_db():
                 value TEXT
             )
         """)
+        # アクティビティログ
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                log_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                occurred_at TEXT NOT NULL,
+                category    TEXT NOT NULL,
+                actor       TEXT,
+                target      TEXT,
+                details     TEXT
+            )
+        """)
         conn.commit()
 
     # 群IDマイグレーション: 既存の9桁数字IDに 'A' プレフィックスを付ける
@@ -403,6 +414,26 @@ def execute(query: str, params: tuple = ()) -> int:
         return cur.lastrowid
 
 
+def log_action(category: str, target=None, details=None):
+    """アクション履歴を1件追加。担当者は session_state.actor_name から取得。"""
+    actor = None
+    try:
+        actor = (st.session_state.get("actor_name") or "").strip() or None
+    except Exception:
+        actor = None
+    try:
+        execute(
+            "INSERT INTO activity_logs (occurred_at, category, actor, target, details) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (now_iso(), category, actor,
+             str(target) if target is not None else None,
+             str(details) if details is not None else None),
+        )
+    except Exception:
+        # ログ失敗は本処理を止めない
+        pass
+
+
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
@@ -445,6 +476,17 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
+    st.markdown("---")
+    # 担当者（ログ用、任意）
+    if "actor_name" not in st.session_state:
+        st.session_state["actor_name"] = ""
+    st.markdown("##### 👤 担当者")
+    st.text_input(
+        "名前（任意）", key="actor_name", label_visibility="collapsed",
+        placeholder="例: 草谷",
+        help="入力するとログに残ります。空でもOK。",
+    )
+
     st.markdown("---")
     st.markdown("##### ⚙️ 表示設定")
     new_mode = st.checkbox("📱 モバイル表示", value=st.session_state.mobile_mode,
@@ -1088,7 +1130,7 @@ hero_html = f"""
 st.markdown(hero_html, unsafe_allow_html=True)
 
 (tab_dash, tab_feed, tab_trial, tab_analysis, tab_rack,
- tab_tank, tab_ind, tab_spawn) = st.tabs(
+ tab_tank, tab_ind, tab_spawn, tab_log) = st.tabs(
     [
         "📊 ダッシュボード",
         "🍚 餌やり",
@@ -1098,6 +1140,7 @@ st.markdown(hero_html, unsafe_allow_html=True)
         "🪣 水槽管理",
         "🐠 個体管理",
         "🥚 産卵成績",
+        "📔 ログ",
     ]
 )
 
@@ -1187,6 +1230,18 @@ with tab_dash:
             )
 
     st.markdown("<br/>", unsafe_allow_html=True)
+    st.markdown('<div class="zf-section-label">📔 最近のアクティビティ</div>', unsafe_allow_html=True)
+    recent_logs = fetch_df(
+        "SELECT occurred_at AS '時刻', category AS '種別', actor AS '担当', "
+        "target AS '対象', details AS '詳細' "
+        "FROM activity_logs ORDER BY log_id DESC LIMIT 5"
+    )
+    if recent_logs.empty:
+        st.caption("ログがまだありません")
+    else:
+        st.dataframe(recent_logs, use_container_width=True, hide_index=True)
+
+    st.markdown("<br/>", unsafe_allow_html=True)
     st.markdown('<div class="zf-section-label">📥 データエクスポート</div>', unsafe_allow_html=True)
     st.subheader("CSV ダウンロード")
     d1, d2, d3, d4, d5 = st.columns(5)
@@ -1254,6 +1309,7 @@ with tab_feed:
             "INSERT INTO feeding_logs (fed_at, memo) VALUES (?, ?)",
             (now_iso(), memo or None),
         )
+        log_action("餌やり", details=(memo or "全水槽給餌"))
         st.rerun()
 
     st.divider()
@@ -1331,7 +1387,7 @@ with tab_trial:
                 if not male or not female:
                     st.error("オスとメスの群を選択してください")
                 else:
-                    execute(
+                    new_tid = execute(
                         """INSERT INTO mating_trials
                            (planned_date, male_id, female_id, source_tank_male, source_tank_female,
                             breeding_tank_id, notes, male_tag, female_tag)
@@ -1339,6 +1395,8 @@ with tab_trial:
                         (planned.isoformat(), male, female, src_m or None, src_f or None,
                          breed or None, notes, male_tag or None, female_tag or None),
                     )
+                    log_action("トライアル計画", target=f"#{new_tid}",
+                               details=f"♂{male} × ♀{female} / 予定 {planned.isoformat()}")
                     st.success("計画を登録しました")
                     st.rerun()
 
@@ -1375,6 +1433,7 @@ with tab_trial:
                             "UPDATE mating_trials SET status='前日セット済み', setup_at=? WHERE trial_id=?",
                             (now_iso(), tid),
                         )
+                        log_action("トライアル前日セット", target=f"#{tid}")
                         st.rerun()
                 elif status == "前日セット済み":
                     c = st.columns(2)
@@ -1383,6 +1442,7 @@ with tab_trial:
                             "UPDATE mating_trials SET divider_removed_at=? WHERE trial_id=?",
                             (now_iso(), tid),
                         )
+                        log_action("仕切り取り出し", target=f"#{tid}")
                         st.rerun()
                     if c[1].button("🥚 採卵完了 → 結果入力", key=f"collect_{tid}", type="primary"):
                         st.session_state[f"collecting_{tid}"] = True
@@ -1392,6 +1452,7 @@ with tab_trial:
                             "UPDATE mating_trials SET status='戻し済み', returned_at=? WHERE trial_id=?",
                             (now_iso(), tid),
                         )
+                        log_action("トライアル戻し完了", target=f"#{tid}")
                         st.rerun()
 
                 # 採卵結果入力フォーム
@@ -1416,6 +1477,8 @@ with tab_trial:
                                    WHERE trial_id=?""",
                                 (now_iso(), hist_id, tid),
                             )
+                            log_action("採卵", target=f"#{tid}",
+                                       details=f"卵 {int(eggs)} 個 / 受精率 {rate}%")
                             st.session_state[f"collecting_{tid}"] = False
                             st.success("採卵結果を登録しました（産卵成績に自動反映）")
                             st.rerun()
@@ -1424,6 +1487,7 @@ with tab_trial:
                 with st.expander("[cancel] ⛔ このトライアルを中止"):
                     if st.button("中止する", key=f"cancel_{tid}"):
                         execute("UPDATE mating_trials SET status='中止' WHERE trial_id=?", (tid,))
+                        log_action("トライアル中止", target=f"#{tid}")
                         st.rerun()
             st.divider()
 
@@ -1694,6 +1758,8 @@ with tab_tank:
                     (tank_id_auto, current_ind or None, health, memo,
                      rack, tier_str, int(col_str)),
                 )
+                log_action("水槽登録/更新", target=tank_id_auto,
+                           details=f"群: {current_ind or '空'} / {health}")
                 st.success(f"水槽 {tank_id_auto} を登録/更新しました")
                 st.rerun()
 
@@ -1898,6 +1964,7 @@ with tab_tank:
             del_id = st.selectbox("削除する水槽ID", df["tank_id"].tolist(), key="del_tank")
             if st.button("削除", type="primary", key="del_tank_btn"):
                 execute("DELETE FROM tanks WHERE tank_id = ?", (del_id,))
+                log_action("水槽削除", target=del_id)
                 st.rerun()
 
 
@@ -1972,6 +2039,8 @@ with tab_ind:
                         "unknown_count=?, lineage=?, sex=? WHERE individual_id=?",
                         (int(e_m), int(e_f), int(e_u), e_lineage or None, sex_v, edit_id),
                     )
+                    log_action("群更新", target=edit_id,
+                               details=f"♂{int(e_m)} / ♀{int(e_f)} / ?{int(e_u)}")
                     st.success(f"群 {edit_id} を更新しました")
                     st.rerun()
 
@@ -2056,6 +2125,8 @@ with tab_ind:
                  int(male_cnt), int(female_cnt), int(unknown_cnt)),
             )
             label = "空" if total == 0 else f"合計 {total} 匹"
+            log_action("群登録/更新", target=auto_id,
+                       details=f"♂{int(male_cnt)} / ♀{int(female_cnt)} / ?{int(unknown_cnt)}")
             st.success(f"群 {auto_id}（{label}）を登録/更新しました")
             st.rerun()
 
@@ -2256,6 +2327,7 @@ with tab_ind:
                         "DELETE FROM individuals WHERE individual_id=?", (del_id,)
                     )
                     conn.commit()
+                log_action("群削除", target=del_id)
                 st.success(f"群 {del_id} を削除しました")
                 st.rerun()
 
@@ -2300,6 +2372,8 @@ with tab_spawn:
                        VALUES (?, ?, ?, ?, ?)""",
                     (sdate.isoformat(), male, female, int(eggs), float(rate)),
                 )
+                log_action("産卵成績(手入力)",
+                           details=f"♂{male} × ♀{female} / 卵{int(eggs)} / 受精率{rate}%")
                 st.success("産卵成績を登録しました")
 
     st.divider()
@@ -2315,3 +2389,84 @@ with tab_spawn:
         chart_df["spawning_date"] = pd.to_datetime(chart_df["spawning_date"])
         chart_df = chart_df.sort_values("spawning_date").set_index("spawning_date")
         st.line_chart(chart_df["fertilization_rate"])
+
+
+# ============================================================
+# 📔 ログ
+# ============================================================
+with tab_log:
+    st.header("アクティビティログ")
+    st.caption("誰がいつ何をしたかを記録。サイドバーで担当者名を設定すると、以後のログに自動で記録されます。")
+
+    log_df_all = fetch_df(
+        "SELECT log_id, occurred_at, category, actor, target, details "
+        "FROM activity_logs ORDER BY log_id DESC"
+    )
+
+    if log_df_all.empty:
+        st.info("ログがまだありません。何か操作するとここに記録されます。")
+    else:
+        # フィルタ
+        st.markdown('<div class="zf-section-label">🔍 絞り込み</div>', unsafe_allow_html=True)
+        fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 3])
+
+        all_cats = sorted(log_df_all["category"].dropna().unique().tolist())
+        f_cat = fc1.multiselect("種別", all_cats, default=[], key="log_f_cat")
+
+        all_actors = sorted([a for a in log_df_all["actor"].dropna().unique().tolist() if a])
+        f_actor = fc2.multiselect("担当者", all_actors, default=[], key="log_f_actor")
+
+        # 日付範囲：最古〜今日
+        min_date = pd.to_datetime(log_df_all["occurred_at"]).min().date()
+        max_date = today_jst()
+        f_dates = fc4.date_input(
+            "日付範囲", value=(min_date, max_date),
+            min_value=min_date, max_value=max_date, key="log_f_dates",
+        )
+        keyword = fc3.text_input("対象/詳細にキーワード", key="log_f_kw")
+
+        view = log_df_all.copy()
+        if f_cat:
+            view = view[view["category"].isin(f_cat)]
+        if f_actor:
+            view = view[view["actor"].isin(f_actor)]
+        if keyword:
+            kw = keyword.lower()
+            view = view[
+                view["target"].fillna("").str.lower().str.contains(kw, na=False)
+                | view["details"].fillna("").str.lower().str.contains(kw, na=False)
+            ]
+        if isinstance(f_dates, tuple) and len(f_dates) == 2:
+            d_from, d_to = f_dates
+            view = view[
+                (view["occurred_at"] >= f"{d_from.isoformat()} 00:00:00")
+                & (view["occurred_at"] <= f"{d_to.isoformat()} 23:59:59")
+            ]
+
+        st.caption(f"表示中: {len(view)} / 全 {len(log_df_all)} 件")
+        view_display = view.rename(columns={
+            "occurred_at": "時刻", "category": "種別", "actor": "担当",
+            "target": "対象", "details": "詳細",
+        })[["時刻", "種別", "担当", "対象", "詳細"]]
+        st.dataframe(view_display, use_container_width=True, hide_index=True)
+
+        st.download_button(
+            "📥 CSVダウンロード", to_csv_bytes(view_display),
+            csv_filename("activity_logs"), "text/csv",
+            disabled=view_display.empty, key="dl_logs",
+        )
+
+        with st.expander("[stats] 📊 種別別の件数"):
+            cat_counts = view.groupby("category").size().reset_index(name="件数")
+            cat_counts = cat_counts.rename(columns={"category": "種別"}).sort_values("件数", ascending=False)
+            st.dataframe(cat_counts, use_container_width=True, hide_index=True)
+
+        with st.expander("[purge] 🗑️ 古いログを削除"):
+            del_before = st.date_input("これより前のログを全削除", value=today_jst(),
+                                        key="log_purge_date")
+            if st.button("削除実行", type="primary", key="log_purge_btn"):
+                cutoff = f"{del_before.isoformat()} 00:00:00"
+                execute("DELETE FROM activity_logs WHERE occurred_at < ?", (cutoff,))
+                log_action("ログ削除", details=f"{cutoff} 以前")
+                st.success("削除しました")
+                st.rerun()
