@@ -1639,28 +1639,45 @@ with tab_tank:
         unsafe_allow_html=True,
     )
 
-    # === 段に応じて「入っている群」を自動セット ===
-    # 例: 段C を選ぶと、Cで始まる群IDの最新（日付→番号順）を初期表示
+    # === 段＋列 に対応する群を自動セット ===
+    # ルール: 群ID = {段}{NNN}{YYMMDD}（10桁）。列番号 01 → NNN=001、列 12 → NNN=012。
+    # tier=C & col=01 を選ぶと、'C001' で始まる群のうち最新（日付順）を初期表示。
     _suggested_group = ""
-    if tier_str:
-        _latest = fetch_df(
-            "SELECT individual_id FROM individuals "
-            "WHERE individual_id LIKE ? AND length(individual_id) = 10 "
-            "ORDER BY substr(individual_id, 5, 6) DESC, "
-            "         substr(individual_id, 2, 3) DESC LIMIT 1",
-            (f"{tier_str}%",),
-        )
-        if not _latest.empty:
-            cand = _latest["individual_id"].iloc[0]
-            if cand in ind_ids:
-                _suggested_group = cand
-    # 段が変わったタイミングで session_state を更新（手動選択も可）
-    if st.session_state.get("_tk_group_tier_seen") != tier_str:
-        st.session_state["_tk_group_tier_seen"] = tier_str
-        st.session_state["tk_group"] = _suggested_group
-    if _suggested_group:
-        st.caption(f"💡 段 {tier_str} の最新群を自動選択中：**{_suggested_group}**　"
-                   "（下のドロップダウンで他に変更可）")
+    _match_prefix = ""
+    if tier_str and col_str:
+        try:
+            _col_int = int(col_str)
+            _match_prefix = f"{tier_str}{_col_int:03d}"   # 例: 'C001', 'C012'
+            _latest = fetch_df(
+                "SELECT individual_id FROM individuals "
+                "WHERE individual_id LIKE ? AND length(individual_id) = 10 "
+                "ORDER BY substr(individual_id, 5, 6) DESC LIMIT 1",
+                (f"{_match_prefix}%",),
+            )
+            if not _latest.empty:
+                cand = _latest["individual_id"].iloc[0]
+                if cand in ind_ids:
+                    _suggested_group = cand
+        except (ValueError, TypeError):
+            pass
+
+    # 段または列が変わったタイミングで session_state を更新
+    _sig = f"{tier_str}|{col_str}"
+    if st.session_state.get("_tk_group_sig") != _sig:
+        st.session_state["_tk_group_sig"] = _sig
+        st.session_state["tk_group"] = _suggested_group if _suggested_group in ind_ids else ""
+
+    if _match_prefix:
+        if _suggested_group:
+            st.caption(
+                f"💡 `{_match_prefix}` で始まる最新群を自動選択中：**{_suggested_group}**　"
+                "（手動で別の群に変更も可）"
+            )
+        else:
+            st.caption(
+                f"💡 `{_match_prefix}` で始まる群はまだありません。"
+                "個体管理タブで新規登録してください。"
+            )
 
     with st.form("tank_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
