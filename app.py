@@ -1767,8 +1767,58 @@ with tab_ind:
     with st.expander("群を削除する"):
         if not df_raw.empty:
             del_id = st.selectbox("削除する群ID", df_raw["individual_id"].tolist(), key="del_ind")
-            if st.button("削除", type="primary", key="del_ind_btn"):
-                execute("DELETE FROM individuals WHERE individual_id = ?", (del_id,))
+
+            # 参照状況をチェック
+            refs_tanks = fetch_df(
+                "SELECT tank_id FROM tanks WHERE current_individual_id=?", (del_id,)
+            )
+            refs_spawn = fetch_df(
+                "SELECT history_id FROM spawning_records "
+                "WHERE male_parent_id=? OR female_parent_id=?", (del_id, del_id),
+            )
+            refs_trials = fetch_df(
+                "SELECT trial_id FROM mating_trials "
+                "WHERE male_id=? OR female_id=?", (del_id, del_id),
+            )
+
+            if not refs_tanks.empty:
+                st.info(
+                    f"📍 {len(refs_tanks)} 件の水槽に紐づいています "
+                    f"（{', '.join(refs_tanks['tank_id'].astype(str))}）"
+                    "→ 削除時に水槽の「入っている群」を空にします"
+                )
+            if not refs_spawn.empty:
+                st.warning(
+                    f"🥚 {len(refs_spawn)} 件の産卵記録の親情報が消えます"
+                    "（産卵記録自体は残ります）"
+                )
+            if not refs_trials.empty:
+                st.error(
+                    f"⛔ {len(refs_trials)} 件の交配トライアル（過去含む）で使用中です。"
+                    "履歴を残すため削除できません。トライアル側を先に削除してください。"
+                )
+
+            can_delete = refs_trials.empty
+            if st.button("削除", type="primary", key="del_ind_btn", disabled=not can_delete):
+                with get_conn() as conn:
+                    # FK制約を満たすため、先に参照を解除
+                    conn.execute(
+                        "UPDATE tanks SET current_individual_id=NULL "
+                        "WHERE current_individual_id=?", (del_id,)
+                    )
+                    conn.execute(
+                        "UPDATE spawning_records SET male_parent_id=NULL "
+                        "WHERE male_parent_id=?", (del_id,)
+                    )
+                    conn.execute(
+                        "UPDATE spawning_records SET female_parent_id=NULL "
+                        "WHERE female_parent_id=?", (del_id,)
+                    )
+                    conn.execute(
+                        "DELETE FROM individuals WHERE individual_id=?", (del_id,)
+                    )
+                    conn.commit()
+                st.success(f"群 {del_id} を削除しました")
                 st.rerun()
 
 
