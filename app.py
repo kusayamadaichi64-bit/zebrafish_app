@@ -1511,14 +1511,38 @@ with tab_tank:
         lin = f"  ・{r['lineage']}" if r["lineage"] else ""
         return f"{gid}{suffix}{lin}"
 
+    st.subheader("水槽の登録 / 更新")
+
+    # === 場所セレクタは form の外（水槽IDが入力に追従して即時表示） ===
+    st.markdown("**場所**（ラック - 段 - 列）")
+    lc1, lc2, lc3 = st.columns(3)
+    rack = lc1.selectbox("ラック", [""] + RACKS, key="form_rack")
+    tier_str = lc2.selectbox("段", [""] + [str(t) for t in TIERS], key="form_tier")
+    col_str = lc3.selectbox("列", [""] + [f"{c:02d}" for c in COLS], key="form_col")
+
+    tank_id_auto = format_location(
+        rack or None,
+        int(tier_str) if tier_str else None,
+        int(col_str) if col_str else None,
+    )
+    _existing_tanks = fetch_df("SELECT tank_id FROM tanks")["tank_id"].tolist()
+    _tank_exists = tank_id_auto and tank_id_auto in _existing_tanks
+    _tank_note = (
+        '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
+        if _tank_exists else ''
+    )
+    st.markdown(
+        "<div style='margin:6px 0 14px 0;padding:12px 16px;"
+        "background:rgba(255,255,255,0.7);border:1px solid #E5E5EA;"
+        "border-radius:14px;font-family:ui-monospace,Menlo,monospace;"
+        f"font-size:16px;color:#1D1D1F'>"
+        f"水槽ID（自動生成）：<b style='font-size:18px'>{tank_id_auto or '（場所を選択）'}</b>{_tank_note}</div>",
+        unsafe_allow_html=True,
+    )
+
     with st.form("tank_form", clear_on_submit=False):
-        st.subheader("水槽の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
-            tank_id = st.text_input(
-                "水槽ID（例: T-001 / または場所コードと同じ B-2-05 でもOK）",
-                key="tk_id",
-            )
             current_ind = st.selectbox(
                 "入っている群", [""] + ind_ids,
                 format_func=fmt_group,
@@ -1527,22 +1551,11 @@ with tab_tank:
             )
             health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health")
         with c2:
-            st.markdown("**場所**（ラック - 段 - 列）")
-            lc1, lc2, lc3 = st.columns(3)
-            rack = lc1.selectbox("ラック", [""] + RACKS, key="form_rack")
-            tier_str = lc2.selectbox("段", [""] + [str(t) for t in TIERS], key="form_tier")
-            col_str = lc3.selectbox("列", [""] + [f"{c:02d}" for c in COLS], key="form_col")
-            preview = format_location(
-                rack or None,
-                int(tier_str) if tier_str else None,
-                int(col_str) if col_str else None,
-            )
-            st.caption(f"場所コード：**{preview or '（未設定）'}**")
             memo = st.text_area("メモ", height=80, key="tk_memo")
 
         if st.form_submit_button("登録 / 更新", type="primary"):
-            if not tank_id.strip():
-                st.error("水槽IDを入力してください")
+            if not tank_id_auto:
+                st.error("ラック・段・列をすべて選んでください（水槽IDが生成されません）")
             else:
                 execute(
                     """INSERT INTO tanks (tank_id, current_individual_id, health_status, memo, rack, tier, col_no)
@@ -1554,12 +1567,11 @@ with tab_tank:
                          rack=excluded.rack,
                          tier=excluded.tier,
                          col_no=excluded.col_no""",
-                    (tank_id.strip(), current_ind or None, health, memo,
-                     rack or None,
-                     int(tier_str) if tier_str else None,
-                     int(col_str) if col_str else None),
+                    (tank_id_auto, current_ind or None, health, memo,
+                     rack, int(tier_str), int(col_str)),
                 )
-                st.success(f"水槽 {tank_id} を登録/更新しました")
+                st.success(f"水槽 {tank_id_auto} を登録/更新しました")
+                st.rerun()
 
     st.divider()
     st.subheader("登録済み水槽")
