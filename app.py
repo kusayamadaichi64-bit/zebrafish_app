@@ -2490,43 +2490,90 @@ with tab_ind:
 # ============================================================
 with tab_spawn:
     st.header("産卵成績")
-    st.caption("交配トライアル経由で自動登録されるほか、ここから手入力もできます")
+    st.caption("交配トライアル経由で自動登録されるほか、ここから手入力もできます。"
+               "群は水槽に紐づいているので、水槽を選ぶだけで自動取得します。")
 
-    males = fetch_df(
-        "SELECT individual_id FROM individuals "
-        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY individual_id"
-    )["individual_id"].tolist()
-    females = fetch_df(
-        "SELECT individual_id FROM individuals "
-        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY individual_id"
-    )["individual_id"].tolist()
+    # 水槽 → 群のマッピング
+    tank_to_group_df = fetch_df(
+        "SELECT t.tank_id, t.current_individual_id, "
+        "       i.lineage, i.male_count, i.female_count, i.unknown_count "
+        "FROM tanks t LEFT JOIN individuals i "
+        "  ON t.current_individual_id = i.individual_id "
+        "ORDER BY t.tank_id"
+    )
+    sp_tank_ids = tank_to_group_df["tank_id"].tolist()
+
+    def _fmt_tank(tid):
+        if not tid:
+            return "（未選択）"
+        r = tank_to_group_df[tank_to_group_df["tank_id"] == tid]
+        if r.empty:
+            return tid
+        row = r.iloc[0]
+        gid = row["current_individual_id"]
+        if not gid or pd.isna(gid):
+            return f"{tid}  （群なし）"
+        parts = []
+        if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
+        if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
+        if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
+        suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
+        return f"{tid}  → {gid}{suffix}"
+
+    # 水槽選択は form の外で（プレビュー即時更新のため）
+    st.subheader("手入力で追加")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
+    with sc2:
+        male_tank = st.selectbox("♂ オス側の水槽", [""] + sp_tank_ids,
+                                  format_func=_fmt_tank, key="sp_male_tank",
+                                  help="この水槽の群がオス親として記録されます")
+    with sc3:
+        female_tank = st.selectbox("♀ メス側の水槽", [""] + sp_tank_ids,
+                                    format_func=_fmt_tank, key="sp_female_tank")
+
+    # 自動取得された群ID
+    male_gid, female_gid = None, None
+    if male_tank:
+        r = tank_to_group_df[tank_to_group_df["tank_id"] == male_tank]
+        if not r.empty:
+            v = r.iloc[0]["current_individual_id"]
+            male_gid = v if pd.notna(v) and v else None
+    if female_tank:
+        r = tank_to_group_df[tank_to_group_df["tank_id"] == female_tank]
+        if not r.empty:
+            v = r.iloc[0]["current_individual_id"]
+            female_gid = v if pd.notna(v) and v else None
+
+    st.markdown(
+        "<div style='margin:6px 0 14px 0;padding:10px 14px;"
+        "background:rgba(255,255,255,0.6);border:1px solid #E5E5EA;"
+        "border-radius:12px;font-size:14px;color:#1D1D1F'>"
+        f"親群（自動取得）：♂ <b>{male_gid or '—'}</b>　×　♀ <b>{female_gid or '—'}</b>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     with st.form("spawn_form", clear_on_submit=False):
-        st.subheader("手入力で追加")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
-            male = st.selectbox("オス親ID（群）", [""] + males, key="sp_male")
-        with c2:
-            female = st.selectbox("メス親ID（群）", [""] + females, key="sp_female")
-            eggs = st.number_input("採卵数", min_value=0, step=1, key="sp_eggs")
-        with c3:
-            rate = st.number_input("受精率 (%)", min_value=0.0, max_value=100.0, step=0.1,
-                                   key="sp_rate")
+        fc1, fc2 = st.columns(2)
+        eggs = fc1.number_input("採卵数", min_value=0, step=1, key="sp_eggs")
+        rate = fc2.number_input("受精率 (%)", min_value=0.0, max_value=100.0,
+                                 step=0.1, key="sp_rate")
         if st.form_submit_button("登録", type="primary"):
-            if not male or not female:
-                st.error("オス親IDとメス親IDを選択してください")
+            if not male_tank or not female_tank:
+                st.error("♂ と ♀ の水槽を選択してください")
             else:
                 execute(
                     """INSERT INTO spawning_records
                        (spawning_date, male_parent_id, female_parent_id, egg_count, fertilization_rate)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (sdate.isoformat(), male, female, int(eggs), float(rate)),
+                    (sdate.isoformat(), male_gid, female_gid, int(eggs), float(rate)),
                 )
                 log_action("産卵成績(手入力)",
-                           details=f"♂{male} × ♀{female} / 卵{int(eggs)} / 受精率{rate}%")
+                           details=f"♂{male_tank}({male_gid or '群なし'}) × "
+                                   f"♀{female_tank}({female_gid or '群なし'}) / "
+                                   f"卵{int(eggs)} / 受精率{rate}%")
                 st.success("産卵成績を登録しました")
 
     st.divider()
