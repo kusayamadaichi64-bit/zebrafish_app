@@ -816,42 +816,27 @@ hr {{
   font-size: 14px !important;
 }}
 
-/* ★ 壊れた Material Symbols のアイコン text を完全に消す
-   (Streamlit が span/div で 'keyboard_arrow_right' という ligature 文字列を出す箇所) */
-[data-testid="stExpander"] summary svg,
-[data-testid="stExpander"] summary [data-testid*="Icon"],
-[data-testid="stExpander"] summary [data-testid*="icon"],
-[data-testid="stExpander"] summary [class*="material"],
-[data-testid="stExpander"] summary [class*="icon"],
-[data-testid="stExpander"] details > summary > span:first-child,
-[data-testid="stExpander"] details > summary > div > span:first-child,
-[data-testid="stExpander"] details > summary > div:first-child > span:first-child,
-[data-testid="stExpander"] .streamlit-expanderHeader svg,
-[data-testid="stExpander"] .streamlit-expanderHeader > span:first-child {{
-  display: none !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-  font-size: 0 !important;
-  overflow: hidden !important;
-}}
-
-/* 自前のシェブロンを ::before で描画 */
-[data-testid="stExpander"] summary::before,
-[data-testid="stExpander"] details > summary::before {{
-  content: '›';
-  display: inline-block;
-  margin-right: 12px;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--text-soft);
-  font-weight: 300;
-  transform: rotate(0deg);
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  vertical-align: -2px;
-}}
-[data-testid="stExpander"] details[open] > summary::before {{
-  transform: rotate(90deg);
+/* Material Symbols（チェブロンなど）のフォントを強制保持。これでリガチャが
+   正しく描画され、'keyboard_arrow_right' などのテキストが出なくなる。 */
+.stApp .material-symbols-outlined,
+.stApp .material-symbols-rounded,
+.stApp .material-symbols-sharp,
+.stApp .material-icons,
+.stApp .material-icons-outlined,
+.stApp [class*="material-symbols"],
+.stApp [class*="material-icons"] {{
+  font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
+               'Material Symbols Sharp', 'Material Icons',
+               'Material Icons Outlined' !important;
+  font-feature-settings: 'liga' !important;
+  -webkit-font-feature-settings: 'liga' !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  word-wrap: normal !important;
+  white-space: nowrap !important;
+  direction: ltr !important;
 }}
 
 /* === プログレス === */
