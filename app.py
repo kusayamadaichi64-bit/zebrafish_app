@@ -1639,13 +1639,36 @@ with tab_tank:
         unsafe_allow_html=True,
     )
 
+    # === 段に応じて「入っている群」を自動セット ===
+    # 例: 段C を選ぶと、Cで始まる群IDの最新（日付→番号順）を初期表示
+    _suggested_group = ""
+    if tier_str:
+        _latest = fetch_df(
+            "SELECT individual_id FROM individuals "
+            "WHERE individual_id LIKE ? AND length(individual_id) = 10 "
+            "ORDER BY substr(individual_id, 5, 6) DESC, "
+            "         substr(individual_id, 2, 3) DESC LIMIT 1",
+            (f"{tier_str}%",),
+        )
+        if not _latest.empty:
+            cand = _latest["individual_id"].iloc[0]
+            if cand in ind_ids:
+                _suggested_group = cand
+    # 段が変わったタイミングで session_state を更新（手動選択も可）
+    if st.session_state.get("_tk_group_tier_seen") != tier_str:
+        st.session_state["_tk_group_tier_seen"] = tier_str
+        st.session_state["tk_group"] = _suggested_group
+    if _suggested_group:
+        st.caption(f"💡 段 {tier_str} の最新群を自動選択中：**{_suggested_group}**　"
+                   "（下のドロップダウンで他に変更可）")
+
     with st.form("tank_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
             current_ind = st.selectbox(
                 "入っている群", [""] + ind_ids,
                 format_func=fmt_group,
-                help="個体管理タブで登録した群が選択肢に出ます",
+                help="段を変えると、その段の最新の群IDが自動選択されます",
                 key="tk_group",
             )
             health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health")
