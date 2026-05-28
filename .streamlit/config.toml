@@ -1,9 +1,9 @@
 [theme]
-# 洗練された温かみ：深い森緑 × クリーム × テラコッタアクセント
-primaryColor = "#2D5F3F"
-backgroundColor = "#FAF6EE"
+# Apple Minimal × Liquid Glass：チャコール基調
+primaryColor = "#1D1D1F"
+backgroundColor = "#F5F5F7"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1F1A14"
+textColor = "#1D1D1F"
 font = "sans serif"
 
 [browser]

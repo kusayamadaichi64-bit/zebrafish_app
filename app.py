@@ -229,10 +229,10 @@ if "mobile_mode" not in st.session_state:
 with st.sidebar:
     st.markdown(
         '<div style="padding:8px 4px 16px 4px">'
-        '<div style="font-size:11px;letter-spacing:0.18em;color:#8A7B68;'
-        'text-transform:uppercase;margin-bottom:6px">ZEBRAFISH LAB</div>'
-        '<div style="font-size:20px;font-weight:700;color:#1F1A14;'
-        'font-family:\'Zen Maru Gothic\',sans-serif">水槽管理システム</div>'
+        '<div style="font-size:10px;letter-spacing:0.28em;color:#AEAEB2;'
+        'text-transform:uppercase;margin-bottom:6px;font-weight:600">ZEBRAFISH LAB</div>'
+        '<div style="font-size:18px;font-weight:600;color:#1D1D1F;'
+        'letter-spacing:-0.015em">水槽管理システム</div>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -249,72 +249,75 @@ with st.sidebar:
     st.caption(date.today().strftime("%Y年 %m月 %d日"))
 
 
-# --- デザインシステム CSS（Liquid Glass） ---
-# 文字化け対策: ネイティブ日本語フォントを最優先に置く（Web font が落ちても安全）
-JP_FONT_STACK = ("-apple-system, BlinkMacSystemFont, "
+# --- デザインシステム CSS（Liquid Glass / Apple Minimal） ---
+# 文字化け対策: ネイティブ日本語フォントを最優先に置く（Web font 失敗時も必ず日本語が出る）
+JP_FONT_STACK = ("-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', "
                  "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', "
                  "'Yu Gothic UI', YuGothic, 'Meiryo', "
-                 "'Noto Sans JP', 'Zen Kaku Gothic New', "
-                 "system-ui, sans-serif")
-JP_HEAD_STACK = ("-apple-system, BlinkMacSystemFont, "
+                 "'Noto Sans JP', system-ui, sans-serif")
+JP_HEAD_STACK = ("-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', "
                  "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', "
                  "'Yu Gothic UI', YuGothic, 'Meiryo', "
-                 "'Zen Maru Gothic', 'Noto Sans JP', "
-                 "system-ui, sans-serif")
+                 "'Noto Sans JP', system-ui, sans-serif")
 
 BASE_CSS = f"""
 <style>
-/* @import は preconnect でブロックされにくくする */
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700&display=swap');
-
 :root {{
-  --text: #1A1612;
-  --text-soft: #5C5048;
-  --text-mute: #8A7E70;
-  --primary: #1E5538;
-  --primary-mid: #2D5F3F;
-  --primary-soft: #5C8D5A;
-  --accent: #D88751;
-  --danger: #B94A3A;
-  --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-bg-strong: rgba(255, 255, 255, 0.78);
-  --glass-bg-soft: rgba(255, 255, 255, 0.35);
-  --glass-border: rgba(255, 255, 255, 0.65);
-  --glass-shadow: 0 8px 32px rgba(75, 65, 50, 0.10);
-  --glass-shadow-lg: 0 18px 48px rgba(75, 65, 50, 0.14);
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --text: #1D1D1F;
+  --text-soft: #6E6E73;
+  --text-mute: #AEAEB2;
+  --primary: #1D1D1F;
+  --primary-mid: #2C2C2E;
+  --primary-soft: #48484A;
+  --accent: #BE8763;            /* 控えめなブロンズ */
+  --accent-soft: #E8D5C0;
+  --danger: #C44545;
+  --success: #4D8D6B;
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-bg-soft: rgba(255, 255, 255, 0.38);
+  --glass-border: rgba(255, 255, 255, 0.70);
+  --glass-shadow: 0 4px 24px rgba(60, 60, 67, 0.06);
+  --glass-shadow-lg: 0 14px 44px rgba(60, 60, 67, 0.10);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }}
 
-/* === グローバル：日本語フォント最優先 === */
-html, body, .stApp, [class*="css"], [class*="st-"], [data-testid] {{
+/* === グローバル：日本語フォントを全テキスト要素に強制適用（文字化け根絶） === */
+html, body, .stApp,
+.stApp *,
+[data-testid="stSidebar"], [data-testid="stSidebar"] *,
+button, summary, input, textarea, select, label, p, span, div, li, td, th,
+[data-baseweb], [data-baseweb] *,
+[role="tab"], [role="button"], [role="dialog"] {{
   font-family: {JP_FONT_STACK} !important;
-  color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }}
 
+.stApp {{ color: var(--text); }}
+
 h1, h2, h3, h4, h5,
 [data-testid="stMarkdownContainer"] h1,
 [data-testid="stMarkdownContainer"] h2,
-[data-testid="stMarkdownContainer"] h3 {{
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4 {{
   font-family: {JP_HEAD_STACK} !important;
   color: var(--text) !important;
-  letter-spacing: -0.01em !important;
+  letter-spacing: -0.015em !important;
   font-weight: 700 !important;
 }}
 h2 {{ font-size: 22px !important; margin-top: 0.5rem !important; }}
-h3 {{ font-size: 18px !important; }}
-h4 {{ font-size: 15px !important; }}
+h3 {{ font-size: 17px !important; }}
+h4 {{ font-size: 14px !important; }}
 
-/* === 背景：複数の彩色ブロブ（ガラスが透けて見える土台） === */
+/* === 背景：極めて控えめなパステルブロブ（クールでミニマル） === */
 .stApp {{
   background:
-    radial-gradient(circle at  8% 12%, rgba(255, 192, 152, 0.55), transparent 30%),
-    radial-gradient(circle at 92% 16%, rgba(150, 220, 180, 0.50), transparent 32%),
-    radial-gradient(circle at 18% 90%, rgba(255, 220, 150, 0.45), transparent 32%),
-    radial-gradient(circle at 85% 85%, rgba(180, 200, 240, 0.45), transparent 32%),
-    radial-gradient(circle at 50% 50%, rgba(255, 215, 195, 0.18), transparent 55%),
-    linear-gradient(180deg, #F8F4E8 0%, #F2EDE0 100%);
+    radial-gradient(circle at  8% 12%, rgba(195, 215, 240, 0.32), transparent 36%),
+    radial-gradient(circle at 92% 18%, rgba(220, 210, 240, 0.28), transparent 38%),
+    radial-gradient(circle at 18% 90%, rgba(195, 220, 205, 0.26), transparent 38%),
+    radial-gradient(circle at 88% 86%, rgba(255, 220, 200, 0.20), transparent 38%),
+    linear-gradient(180deg, #F5F5F7 0%, #ECECEF 100%);
   background-attachment: fixed;
 }}
 
@@ -328,10 +331,10 @@ h4 {{ font-size: 15px !important; }}
 .stTabs [data-baseweb="tab-list"] {{
   gap: 4px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
-  padding: 8px;
-  border-radius: 22px;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  padding: 6px;
+  border-radius: 20px;
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow), var(--glass-highlight);
   flex-wrap: wrap;
@@ -340,22 +343,25 @@ h4 {{ font-size: 15px !important; }}
 .stTabs [data-baseweb="tab"] {{
   background: transparent;
   border-radius: 14px !important;
-  padding: 9px 18px !important;
+  padding: 8px 16px !important;
   color: var(--text-soft) !important;
   font-weight: 500 !important;
-  font-size: 14px !important;
+  font-size: 13px !important;
+  font-family: {JP_FONT_STACK} !important;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   border: none !important;
 }}
+.stTabs [data-baseweb="tab"] * {{ font-family: {JP_FONT_STACK} !important; }}
 .stTabs [data-baseweb="tab"]:hover {{
   background: rgba(255, 255, 255, 0.55);
-  color: var(--primary) !important;
+  color: var(--text) !important;
 }}
 .stTabs [aria-selected="true"] {{
-  background: linear-gradient(135deg, rgba(45, 95, 63, 0.95), rgba(30, 80, 50, 0.95)) !important;
+  background: linear-gradient(135deg, #1D1D1F, #2C2C2E) !important;
   color: white !important;
-  box-shadow: 0 4px 16px rgba(45, 95, 63, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.20);
+  box-shadow: 0 4px 12px rgba(29, 29, 31, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }}
+.stTabs [aria-selected="true"] * {{ color: white !important; }}
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{ display: none !important; }}
 
 /* === ボタン：ガラスピル === */
@@ -365,61 +371,63 @@ h4 {{ font-size: 15px !important; }}
   backdrop-filter: blur(18px) saturate(180%);
   border: 1px solid var(--glass-border) !important;
   border-radius: 999px !important;
-  padding: 10px 22px !important;
+  padding: 9px 20px !important;
   font-weight: 500 !important;
+  font-size: 13px !important;
+  font-family: {JP_FONT_STACK} !important;
   color: var(--text) !important;
   box-shadow: var(--glass-shadow), var(--glass-highlight);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }}
 .stButton > button:hover, .stDownloadButton > button:hover {{
-  transform: translateY(-2px) scale(1.01);
-  background: rgba(255, 255, 255, 0.92) !important;
-  color: var(--primary) !important;
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.95) !important;
+  color: var(--text) !important;
   box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
 }}
 .stButton > button[kind="primary"] {{
-  background: linear-gradient(135deg, rgba(45, 95, 63, 0.96), rgba(30, 75, 50, 0.96)) !important;
+  background: linear-gradient(135deg, #1D1D1F, #2C2C2E) !important;
   color: white !important;
-  border: 1px solid rgba(45, 95, 63, 0.6) !important;
-  box-shadow: 0 6px 20px rgba(45, 95, 63, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(29, 29, 31, 0.5) !important;
+  box-shadow: 0 4px 16px rgba(29, 29, 31, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }}
 .stButton > button[kind="primary"]:hover {{
-  transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 14px 36px rgba(45, 95, 63, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(29, 29, 31, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   color: white !important;
 }}
 
 /* === メトリクスカード：ガラス === */
 [data-testid="stMetric"] {{
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
-  padding: 20px 24px !important;
-  border-radius: 22px !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  padding: 18px 22px !important;
+  border-radius: 20px !important;
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow), var(--glass-highlight);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }}
 [data-testid="stMetric"]:hover {{
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   background: var(--glass-bg-strong);
   box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
 }}
-[data-testid="stMetricLabel"] {{
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {{
   color: var(--text-mute) !important;
-  font-size: 11px !important;
-  letter-spacing: 0.14em !important;
+  font-size: 10px !important;
+  letter-spacing: 0.16em !important;
   text-transform: uppercase !important;
   font-weight: 600 !important;
   font-family: {JP_FONT_STACK} !important;
 }}
-[data-testid="stMetricValue"] {{
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {{
   color: var(--text) !important;
   font-weight: 700 !important;
   font-family: {JP_HEAD_STACK} !important;
-  font-size: 30px !important;
+  font-size: 28px !important;
   line-height: 1.1 !important;
-  letter-spacing: -0.02em !important;
+  letter-spacing: -0.025em !important;
 }}
 [data-testid="stMetricDelta"] {{ color: var(--text-soft) !important; }}
 
@@ -436,9 +444,9 @@ h4 {{ font-size: 15px !important; }}
   transition: all 0.2s ease;
 }}
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus, .stDateInput input:focus {{
-  border-color: rgba(45, 95, 63, 0.5) !important;
-  background: rgba(255, 255, 255, 0.92) !important;
-  box-shadow: 0 0 0 4px rgba(45, 95, 63, 0.14) !important;
+  border-color: rgba(29, 29, 31, 0.45) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 0 0 0 4px rgba(29, 29, 31, 0.08) !important;
   outline: none !important;
 }}
 .stSelectbox > div > div, .stMultiSelect > div > div {{
@@ -490,23 +498,28 @@ hr {{
 /* === expander：ガラス === */
 [data-testid="stExpander"] {{
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--glass-border) !important;
   border-radius: 18px !important;
   box-shadow: var(--glass-shadow);
   overflow: hidden;
 }}
-[data-testid="stExpander"] summary {{
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary *,
+[data-testid="stExpander"] details > summary {{
   padding: 14px 18px !important;
   font-weight: 500 !important;
+  font-family: {JP_FONT_STACK} !important;
+  color: var(--text) !important;
+  font-size: 14px !important;
 }}
 
 /* === プログレス === */
 .stProgress > div > div > div {{
-  background: linear-gradient(90deg, #5C8D5A, #2D5F3F, #1E5538) !important;
+  background: linear-gradient(90deg, #6E6E73, #1D1D1F) !important;
   border-radius: 10px !important;
-  box-shadow: 0 2px 8px rgba(45, 95, 63, 0.28);
+  box-shadow: 0 2px 6px rgba(29, 29, 31, 0.20);
 }}
 .stProgress > div > div {{
   background-color: rgba(255, 255, 255, 0.50) !important;
@@ -527,67 +540,70 @@ hr {{
   color: var(--text-soft);
 }}
 
-/* === ヒーロー：シグネチャー・ガラスシャード === */
+/* === ヒーロー：シグネチャー・ガラスシャード（チャコール） === */
 .zf-hero {{
   position: relative;
   background:
-    radial-gradient(circle at 88% 22%, rgba(255, 200, 130, 0.42), transparent 38%),
-    radial-gradient(circle at  8% 78%, rgba(150, 220, 200, 0.38), transparent 38%),
-    linear-gradient(135deg, rgba(45, 95, 63, 0.94), rgba(28, 70, 45, 0.94));
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.20);
-  border-radius: 28px;
-  padding: 32px 40px;
+    radial-gradient(circle at 92% 18%, rgba(190, 135, 99, 0.30), transparent 42%),
+    radial-gradient(circle at 10% 82%, rgba(120, 140, 175, 0.22), transparent 42%),
+    linear-gradient(135deg, #1D1D1F 0%, #2C2C2E 100%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 24px;
+  padding: 30px 36px;
   color: white;
   box-shadow:
-    0 20px 60px rgba(45, 95, 63, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  margin: 0 0 32px 0;
+    0 16px 48px rgba(29, 29, 31, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  margin: 0 0 28px 0;
   overflow: hidden;
 }}
 .zf-hero::before {{
-  content: '🐟';
+  content: '';
   position: absolute;
-  font-size: 200px;
-  right: -25px;
-  bottom: -60px;
-  opacity: 0.13;
-  transform: rotate(-15deg);
+  top: 0; right: 0;
+  width: 380px; height: 380px;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(190, 135, 99, 0.28), transparent 50%),
+    radial-gradient(circle at 70% 70%, rgba(140, 165, 200, 0.18), transparent 55%);
+  filter: blur(40px);
+  pointer-events: none;
 }}
 .zf-hero::after {{
   content: '';
   position: absolute;
   top: -50%; left: -20%;
   width: 60%; height: 200%;
-  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.08) 50%, transparent 70%);
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.05) 50%, transparent 62%);
   transform: rotate(15deg);
   pointer-events: none;
 }}
 .zf-hero .eyebrow {{
-  font-size: 11px;
-  letter-spacing: 0.28em;
+  font-size: 10px;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.55);
   font-weight: 600;
-  margin: 0 0 8px 0;
+  margin: 0 0 10px 0;
   position: relative; z-index: 2;
+  font-family: {JP_FONT_STACK} !important;
 }}
 .zf-hero h1 {{
   color: white !important;
   margin: 0 !important;
-  font-size: 34px !important;
-  font-weight: 700 !important;
-  letter-spacing: -0.01em;
+  font-size: 30px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
   font-family: {JP_HEAD_STACK} !important;
   position: relative; z-index: 2;
 }}
 .zf-hero .sub {{
-  color: rgba(255, 255, 255, 0.88);
-  margin: 8px 0 0 0;
-  font-size: 14px;
+  color: rgba(255, 255, 255, 0.62);
+  margin: 6px 0 0 0;
+  font-size: 13px;
+  font-weight: 400;
   position: relative; z-index: 2;
+  font-family: {JP_FONT_STACK} !important;
 }}
 
 /* === セクションラベル === */
@@ -601,18 +617,18 @@ hr {{
 }}
 
 /* === 餌やりステータス === */
-.feed-ok    {{ color: #2D5F3F; font-weight: 600; }}
-.feed-warn  {{ color: #C48A2A; font-weight: 600; }}
-.feed-alert {{ color: #B94A3A; font-weight: 700; }}
+.feed-ok    {{ color: #4D8D6B; font-weight: 600; }}
+.feed-warn  {{ color: #BE8763; font-weight: 600; }}
+.feed-alert {{ color: #C44545; font-weight: 700; }}
 
 /* === マルチセレクト・ピル === */
 [data-baseweb="tag"] {{
-  background: rgba(45, 95, 63, 0.14) !important;
+  background: rgba(29, 29, 31, 0.06) !important;
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(45, 95, 63, 0.22) !important;
+  border: 1px solid rgba(29, 29, 31, 0.12) !important;
   border-radius: 999px !important;
-  color: var(--primary) !important;
+  color: var(--text) !important;
   font-weight: 500;
 }}
 
@@ -627,7 +643,7 @@ hr {{
 }}
 [data-testid="stFileUploadDropzone"]:hover {{
   background: var(--glass-bg-strong) !important;
-  border-color: rgba(45, 95, 63, 0.50) !important;
+  border-color: rgba(29, 29, 31, 0.40) !important;
 }}
 
 /* === スクロールバー === */
