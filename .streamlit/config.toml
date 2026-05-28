@@ -1,0 +1,10 @@
+[theme]
+# 温かみのあるベージュ × 水草グリーン
+primaryColor = "#5C8D5A"
+backgroundColor = "#FBF7F0"
+secondaryBackgroundColor = "#F0E8D8"
+textColor = "#3C3530"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
