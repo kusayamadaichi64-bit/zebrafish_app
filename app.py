@@ -220,6 +220,43 @@ def init_db():
             if col_def[0] not in trial_cols:
                 c.execute(f"ALTER TABLE mating_trials ADD COLUMN {col_def[0]} {col_def[1]}")
 
+        # マイグレーション: mating_trials.male_id/female_id を NOT NULL → nullable に変更
+        # （SQLiteは ALTER COLUMN 非対応のため、テーブル再作成）
+        info = c.execute("PRAGMA table_info(mating_trials)").fetchall()
+        male_is_notnull = any(col[1] == "male_id" and col[3] == 1 for col in info)
+        if male_is_notnull:
+            c.execute("""
+                CREATE TABLE mating_trials_new (
+                    trial_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    planned_date        TEXT NOT NULL,
+                    male_id             TEXT,
+                    female_id           TEXT,
+                    source_tank_male    TEXT,
+                    source_tank_female  TEXT,
+                    breeding_tank_id    TEXT,
+                    status              TEXT NOT NULL DEFAULT '計画中'
+                                        CHECK(status IN ('計画中','前日セット済み','採卵済み','戻し済み','中止')),
+                    setup_at            TEXT,
+                    divider_removed_at  TEXT,
+                    egg_collected_at    TEXT,
+                    returned_at         TEXT,
+                    spawning_history_id INTEGER,
+                    notes               TEXT,
+                    male_tag            TEXT,
+                    female_tag          TEXT
+                )
+            """)
+            c.execute("""
+                INSERT INTO mating_trials_new
+                SELECT trial_id, planned_date, male_id, female_id, source_tank_male,
+                       source_tank_female, breeding_tank_id, status, setup_at,
+                       divider_removed_at, egg_collected_at, returned_at,
+                       spawning_history_id, notes, male_tag, female_tag
+                FROM mating_trials
+            """)
+            c.execute("DROP TABLE mating_trials")
+            c.execute("ALTER TABLE mating_trials_new RENAME TO mating_trials")
+
         # 設定テーブル（段の一覧などを保存）
         c.execute("""
             CREATE TABLE IF NOT EXISTS app_settings (
@@ -1470,18 +1507,8 @@ with tab_feed:
 # ============================================================
 with tab_trial:
     st.header("交配トライアル管理")
-    st.caption("「♂群から1匹 × ♀群から1匹」をペアリングして交配。個別タグは任意（テスト機能）。")
+    st.caption("元水槽・交配用水槽を指定して交配を計画。個別タグで特定の魚を追跡したい時は任意で入力。")
 
-    males = fetch_df(
-        "SELECT individual_id FROM individuals "
-        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY individual_id"
-    )["individual_id"].tolist()
-    females = fetch_df(
-        "SELECT individual_id FROM individuals "
-        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY individual_id"
-    )["individual_id"].tolist()
     tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
 
     # --- 新規計画 ---
@@ -1490,42 +1517,37 @@ with tab_trial:
             c1, c2 = st.columns(2)
             with c1:
                 planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1))
-                male = st.selectbox("♂ オス側の群", [""] + males,
-                                    help="オスを取り出す群を選択")
-                female = st.selectbox("♀ メス側の群", [""] + females,
-                                      help="メスを取り出す群を選択")
-            with c2:
                 src_m = st.selectbox("オス側の元水槽（戻し先）", [""] + tank_ids)
                 src_f = st.selectbox("メス側の元水槽（戻し先）", [""] + tank_ids)
+            with c2:
                 breed = st.selectbox("交配用水槽", [""] + tank_ids)
-
-            with st.expander("[tag] 🏷️ 個別交配タグ（任意 / テスト機能）", expanded=False):
-                st.caption(
-                    "1匹だけ特別に追跡したい時に、このトライアル限定の仮名を付けられます。"
-                    "未入力でOK。使わないようなら後で削除可。"
-                )
                 tc1, tc2 = st.columns(2)
-                male_tag = tc1.text_input("♂ 個別タグ", placeholder="例: M-test01")
-                female_tag = tc2.text_input("♀ 個別タグ", placeholder="例: F-test01")
+                male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01")
+                female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01")
 
             notes = st.text_area("メモ")
             ok = st.form_submit_button("計画を登録", type="primary")
             if ok:
-                if not male or not female:
-                    st.error("オスとメスの群を選択してください")
-                else:
-                    new_tid = execute(
-                        """INSERT INTO mating_trials
-                           (planned_date, male_id, female_id, source_tank_male, source_tank_female,
-                            breeding_tank_id, notes, male_tag, female_tag)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (planned.isoformat(), male, female, src_m or None, src_f or None,
-                         breed or None, notes, male_tag or None, female_tag or None),
-                    )
-                    log_action("トライアル計画", target=f"#{new_tid}",
-                               details=f"♂{male} × ♀{female} / 予定 {planned.isoformat()}")
-                    st.success("計画を登録しました")
-                    st.rerun()
+                new_tid = execute(
+                    """INSERT INTO mating_trials
+                       (planned_date, male_id, female_id, source_tank_male, source_tank_female,
+                        breeding_tank_id, notes, male_tag, female_tag)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (planned.isoformat(), None, None, src_m or None, src_f or None,
+                     breed or None, notes, male_tag or None, female_tag or None),
+                )
+                log_detail_parts = []
+                if src_m or src_f:
+                    log_detail_parts.append(f"戻し♂{src_m or '-'}/♀{src_f or '-'}")
+                if breed:
+                    log_detail_parts.append(f"交配槽{breed}")
+                if male_tag or female_tag:
+                    log_detail_parts.append(f"タグ♂{male_tag or '-'}/♀{female_tag or '-'}")
+                log_detail_parts.append(f"予定{planned.isoformat()}")
+                log_action("トライアル計画", target=f"#{new_tid}",
+                           details=" / ".join(log_detail_parts))
+                st.success("計画を登録しました")
+                st.rerun()
 
     st.divider()
 
@@ -1546,8 +1568,12 @@ with tab_trial:
                 top = st.columns([3, 2, 2])
                 m_tag = t["male_tag"] if "male_tag" in t.index else None
                 f_tag = t["female_tag"] if "female_tag" in t.index else None
-                m_label = f"♂ {t['male_id']}" + (f"  [{m_tag}]" if pd.notna(m_tag) and m_tag else "")
-                f_label = f"♀ {t['female_id']}" + (f"  [{f_tag}]" if pd.notna(f_tag) and f_tag else "")
+                m_id = t["male_id"] if pd.notna(t.get("male_id")) and t["male_id"] else None
+                f_id = t["female_id"] if pd.notna(t.get("female_id")) and t["female_id"] else None
+                m_show = m_id or (m_tag if pd.notna(m_tag) and m_tag else None) or "—"
+                f_show = f_id or (f_tag if pd.notna(f_tag) and f_tag else None) or "—"
+                m_label = f"♂ {m_show}"
+                f_label = f"♀ {f_show}"
                 top[0].markdown(f"### {badge} Trial #{tid} — {status}")
                 top[0].caption(f"予定日: {t['planned_date']}　{m_label}　×　{f_label}")
                 top[1].markdown(f"**交配用水槽:** {t['breeding_tank_id'] or '-'}")
