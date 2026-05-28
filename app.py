@@ -1167,10 +1167,10 @@ with tab_trial:
             badge = {"計画中": "🟦", "前日セット済み": "🟨", "採卵済み": "🟧"}.get(status, "⬜")
             with st.container():
                 top = st.columns([3, 2, 2])
-                m_tag = t.get("male_tag") if isinstance(t, dict) else (t["male_tag"] if "male_tag" in t.index else None)
-                f_tag = t.get("female_tag") if isinstance(t, dict) else (t["female_tag"] if "female_tag" in t.index else None)
-                m_label = f"♂ {t['male_id']}" + (f" [{m_tag}]" if pd.notna(m_tag) and m_tag else "")
-                f_label = f"♀ {t['female_id']}" + (f" [{f_tag}]" if pd.notna(f_tag) and f_tag else "")
+                m_tag = t["male_tag"] if "male_tag" in t.index else None
+                f_tag = t["female_tag"] if "female_tag" in t.index else None
+                m_label = f"♂ {t['male_id']}" + (f"  [{m_tag}]" if pd.notna(m_tag) and m_tag else "")
+                f_label = f"♀ {t['female_id']}" + (f"  [{f_tag}]" if pd.notna(f_tag) and f_tag else "")
                 top[0].markdown(f"### {badge} Trial #{tid} — {status}")
                 top[0].caption(f"予定日: {t['planned_date']}　{m_label}　×　{f_label}")
                 top[1].markdown(f"**交配用水槽:** {t['breeding_tank_id'] or '-'}")
@@ -1382,14 +1382,37 @@ with tab_tank:
     st.caption(f"配置：{len(RACKS)}ラック × {len(TIERS)}段 × {len(COLS)}列 = "
                f"最大 {len(RACKS)*len(TIERS)*len(COLS)} 水槽")
 
-    ind_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
+    groups_df = fetch_df(
+        "SELECT individual_id, lineage, male_count, female_count, unknown_count "
+        "FROM individuals ORDER BY individual_id"
+    )
+    ind_ids = groups_df["individual_id"].tolist()
+
+    def fmt_group(gid):
+        if not gid:
+            return "（未指定）"
+        row = groups_df[groups_df["individual_id"] == gid]
+        if row.empty:
+            return gid
+        r = row.iloc[0]
+        parts = []
+        if int(r["male_count"] or 0) > 0:    parts.append(f"♂{int(r['male_count'])}")
+        if int(r["female_count"] or 0) > 0:  parts.append(f"♀{int(r['female_count'])}")
+        if int(r["unknown_count"] or 0) > 0: parts.append(f"？{int(r['unknown_count'])}")
+        suffix = f"  ({' / '.join(parts)})" if parts else ""
+        lin = f"  ・{r['lineage']}" if r["lineage"] else ""
+        return f"{gid}{suffix}{lin}"
 
     with st.form("tank_form", clear_on_submit=True):
         st.subheader("水槽の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
             tank_id = st.text_input("水槽ID（例: T-001 / または場所コードと同じ B-2-05 でもOK）")
-            current_ind = st.selectbox("現在の個体ID", [""] + ind_ids)
+            current_ind = st.selectbox(
+                "入っている群", [""] + ind_ids,
+                format_func=fmt_group,
+                help="個体管理タブで登録した群が選択肢に出ます",
+            )
             health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"])
         with c2:
             st.markdown("**場所**（ラック - 段 - 列）")
@@ -1429,11 +1452,32 @@ with tab_tank:
     st.divider()
     st.subheader("登録済み水槽")
 
-    df = fetch_df("SELECT * FROM tanks ORDER BY rack, tier, col_no, tank_id")
+    df = fetch_df(
+        "SELECT t.*, "
+        "(COALESCE(i.male_count,0)+COALESCE(i.female_count,0)+COALESCE(i.unknown_count,0)) AS group_total, "
+        "i.male_count   AS group_m, "
+        "i.female_count AS group_f, "
+        "i.unknown_count AS group_u, "
+        "i.lineage      AS group_lineage "
+        "FROM tanks t LEFT JOIN individuals i ON t.current_individual_id = i.individual_id "
+        "ORDER BY t.rack, t.tier, t.col_no, t.tank_id"
+    )
     if not df.empty:
         df["場所"] = df.apply(
             lambda r: format_location(r["rack"], r["tier"], r["col_no"]), axis=1
         )
+
+        def fmt_group_row(r):
+            gid = r["current_individual_id"]
+            if not gid or pd.isna(gid):
+                return ""
+            parts = []
+            if (r.get("group_m") or 0) > 0: parts.append(f"♂{int(r['group_m'])}")
+            if (r.get("group_f") or 0) > 0: parts.append(f"♀{int(r['group_f'])}")
+            if (r.get("group_u") or 0) > 0: parts.append(f"？{int(r['group_u'])}")
+            suffix = f" ({' / '.join(parts)})" if parts else ""
+            return f"{gid}{suffix}"
+        df["入っている群"] = df.apply(fmt_group_row, axis=1)
 
         # フィルタ
         fc1, fc2, fc3 = st.columns(3)
@@ -1451,15 +1495,17 @@ with tab_tank:
 
         st.caption(f"表示中: {len(view)} / 全 {len(df)} 水槽")
         st.dataframe(
-            view[["tank_id", "場所", "rack", "tier", "col_no",
-                  "current_individual_id", "health_status", "memo"]],
+            view[["tank_id", "場所", "入っている群", "health_status", "memo"]].rename(
+                columns={"tank_id": "水槽ID", "health_status": "健康状態", "memo": "メモ"}
+            ),
             use_container_width=True, hide_index=True,
         )
     else:
         st.info("まだ水槽が登録されていません")
 
-    st.download_button("📥 CSVダウンロード", to_csv_bytes(df), csv_filename("tanks"),
-                       "text/csv", disabled=df.empty, key="dl_tanks")
+    _df_raw = fetch_df("SELECT * FROM tanks ORDER BY rack, tier, col_no, tank_id")
+    st.download_button("📥 CSVダウンロード", to_csv_bytes(_df_raw), csv_filename("tanks"),
+                       "text/csv", disabled=_df_raw.empty, key="dl_tanks")
 
     # ----------------------------------------------------------------
     # CSV 一括インポート
@@ -1620,14 +1666,38 @@ with tab_ind:
         " 1つの群ID = 同じ系統・同じ世代の魚の集まり。性別ごとに匹数を入力してください。"
     )
 
+    # 既存の番号一覧（重複防止用ヒント）
+    _existing_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
+    # 入力日今日基準で次の番号候補を計算（同じ日付の最大番号+1）
+    _today_str = today_jst().strftime("%y%m%d")
+    _today_seqs = [int(i[:3]) for i in _existing_ids
+                   if len(i) == 9 and i[3:9] == _today_str and i[:3].isdigit()]
+    _suggested_seq = (max(_today_seqs) + 1) if _today_seqs else 1
+
     with st.form("ind_form", clear_on_submit=True):
         st.subheader("群の登録 / 更新")
         c1, c2 = st.columns(2)
         with c1:
-            ind_id = st.text_input("群ID（例: AB-2026-01 / F-001）",
-                                   help="同じ系統・世代でまとめた群に1つのIDを付けます")
-            birth = st.date_input("生まれた日付（コホート発生日）", value=today_jst())
+            seq_no = st.number_input(
+                "番号（001〜999）", min_value=1, max_value=999, value=int(_suggested_seq), step=1,
+                help="この日に何番目に登録するか。同じ日の重複を避けるため次の空き番号を初期表示しています。",
+            )
+            entry_date = st.date_input("入力日", value=today_jst())
             lineage = st.text_input("系統名（例: AB, TU, WIK）")
+
+            auto_id = f"{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
+            already = auto_id in _existing_ids
+            overwrite_note = (
+                '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
+                if already else ''
+            )
+            st.markdown(
+                "<div style='margin-top:6px;padding:10px 14px;"
+                "background:rgba(255,255,255,0.6);border:1px solid #E5E5EA;"
+                "border-radius:12px;font-family:ui-monospace,Menlo,monospace;"
+                f"font-size:15px;color:#1D1D1F'>群ID（自動生成）：<b>{auto_id}</b>{overwrite_note}</div>",
+                unsafe_allow_html=True,
+            )
         with c2:
             st.markdown("**匹数（性別ごと）**")
             mc1, mc2, mc3 = st.columns(3)
@@ -1641,12 +1711,9 @@ with tab_ind:
                         unsafe_allow_html=True)
 
         if st.form_submit_button("登録 / 更新", type="primary"):
-            if not ind_id.strip():
-                st.error("群IDを入力してください")
-            elif total == 0:
+            if total == 0:
                 st.error("匹数を1匹以上入力してください")
             else:
-                # sex は集計から自動決定（既存ロジック互換）
                 if male_cnt > 0 and female_cnt == 0 and unknown_cnt == 0:
                     sex_v = "オス"
                 elif female_cnt > 0 and male_cnt == 0 and unknown_cnt == 0:
@@ -1665,10 +1732,11 @@ with tab_ind:
                          male_count=excluded.male_count,
                          female_count=excluded.female_count,
                          unknown_count=excluded.unknown_count""",
-                    (ind_id.strip(), birth.isoformat(), sex_v, lineage,
+                    (auto_id, entry_date.isoformat(), sex_v, lineage,
                      int(male_cnt), int(female_cnt), int(unknown_cnt)),
                 )
-                st.success(f"群 {ind_id}（合計 {total} 匹）を登録/更新しました")
+                st.success(f"群 {auto_id}（合計 {total} 匹）を登録/更新しました")
+                st.rerun()
 
     st.divider()
     st.subheader("登録済みの群")
