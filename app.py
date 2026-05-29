@@ -1334,7 +1334,7 @@ hero_html = f"""
 st.markdown(hero_html, unsafe_allow_html=True)
 
 (tab_dash, tab_feed, tab_trial, tab_analysis, tab_rack,
- tab_tank, tab_spawn, tab_log) = st.tabs(
+ tab_tank, tab_log) = st.tabs(
     [
         "📊 ダッシュボード",
         "🍚 餌やり",
@@ -1342,7 +1342,6 @@ st.markdown(hero_html, unsafe_allow_html=True)
         "📈 成績分析",
         "📐 棚ビュー",
         "🪣 水槽管理",
-        "🥚 産卵成績",
         "📔 ログ",
     ]
 )
@@ -1352,7 +1351,7 @@ st.markdown(hero_html, unsafe_allow_html=True)
 # 📊 ダッシュボード
 # ============================================================
 # タブインデックス（タブ並び順と一致させる）
-TAB_DASH, TAB_FEED, TAB_TRIAL, TAB_ANALYSIS, TAB_RACK, TAB_TANK, TAB_SPAWN, TAB_LOG = range(8)
+TAB_DASH, TAB_FEED, TAB_TRIAL, TAB_ANALYSIS, TAB_RACK, TAB_TANK, TAB_LOG = range(7)
 
 with tab_dash:
     # === タブジャンプ要求が積まれていたら、JSで該当タブをクリックして遷移 ===
@@ -1781,16 +1780,34 @@ with tab_trial:
     st.divider()
 
     # --- 完了済みトライアル ---
-    st.subheader("📚 完了・中止トライアル")
+    st.subheader("📚 完了・中止トライアル（採卵結果込み）")
     done = fetch_df(
-        "SELECT trial_id, planned_date, male_id, female_id, status, "
-        "spawning_history_id, breeding_tank_id, notes "
-        "FROM mating_trials WHERE status IN ('戻し済み','中止') ORDER BY planned_date DESC"
+        "SELECT t.trial_id AS '#', t.planned_date AS '予定日', t.status AS '状態', "
+        "       t.source_tank_male  AS '♂水槽', t.source_tank_female AS '♀水槽', "
+        "       t.breeding_tank_id  AS '交配槽', "
+        "       s.egg_count         AS '採卵数', "
+        "       s.fertilization_rate AS '受精率(%)', "
+        "       t.male_tag AS '♂タグ', t.female_tag AS '♀タグ', "
+        "       t.notes AS 'メモ' "
+        "FROM mating_trials t "
+        "LEFT JOIN spawning_records s ON t.spawning_history_id = s.history_id "
+        "WHERE t.status IN ('戻し済み','中止') ORDER BY t.planned_date DESC, t.trial_id DESC"
     )
     st.dataframe(done, use_container_width=True, hide_index=True)
     st.download_button("📥 CSVダウンロード", to_csv_bytes(done),
                        csv_filename("mating_trials_done"), "text/csv",
                        disabled=done.empty, key="dl_trials_done")
+
+    # 受精率の推移グラフ（産卵成績タブから移行）
+    chart_src = fetch_df(
+        "SELECT spawning_date, fertilization_rate FROM spawning_records "
+        "WHERE spawning_date IS NOT NULL ORDER BY spawning_date"
+    )
+    if not chart_src.empty:
+        st.subheader("📈 受精率の推移")
+        chart_src["spawning_date"] = pd.to_datetime(chart_src["spawning_date"])
+        chart_src = chart_src.set_index("spawning_date")
+        st.line_chart(chart_src["fertilization_rate"])
 
 
 # ============================================================
@@ -2253,99 +2270,6 @@ with tab_tank:
                 st.rerun()
 
 
-
-# ============================================================
-# 🥚 産卵成績（手入力 & 履歴）
-# ============================================================
-with tab_spawn:
-    st.header("産卵成績")
-    st.caption("水槽IDをそのまま親として記録します。同じ水槽の中身が変わっても、入居日で世代を区別できます。")
-
-    # 水槽情報（性別ごとにフィルタ）
-    sp_male_df = fetch_df(
-        "SELECT tank_id, lineage, male_count, female_count, unknown_count FROM tanks "
-        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY tank_id"
-    )
-    sp_female_df = fetch_df(
-        "SELECT tank_id, lineage, male_count, female_count, unknown_count FROM tanks "
-        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
-        "ORDER BY tank_id"
-    )
-    sp_male_ids = sp_male_df["tank_id"].tolist()
-    sp_female_ids = sp_female_df["tank_id"].tolist()
-
-    def _fmt_sp_tank(df, tid):
-        if not tid:
-            return "（未選択）"
-        r = df[df["tank_id"] == tid]
-        if r.empty:
-            return tid
-        row = r.iloc[0]
-        parts = []
-        if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
-        if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
-        if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
-        suffix = f"  ({' / '.join(parts)})" if parts else ""
-        lin = f"  ・{row['lineage']}" if row["lineage"] else ""
-        return f"{tid}{suffix}{lin}"
-
-    st.subheader("手入力で追加")
-    sc1, sc2, sc3 = st.columns(3)
-    with sc1:
-        sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
-    with sc2:
-        male_tank = st.selectbox(
-            "♂ オス側の水槽", [""] + sp_male_ids,
-            format_func=lambda t: _fmt_sp_tank(sp_male_df, t),
-            key="sp_male_tank",
-            help="♂ または ? がいる水槽だけ表示されます",
-        )
-    with sc3:
-        female_tank = st.selectbox(
-            "♀ メス側の水槽", [""] + sp_female_ids,
-            format_func=lambda t: _fmt_sp_tank(sp_female_df, t),
-            key="sp_female_tank",
-            help="♀ または ? がいる水槽だけ表示されます",
-        )
-
-    with st.form("spawn_form", clear_on_submit=False):
-        fc1, fc2 = st.columns(2)
-        eggs = fc1.number_input("採卵数", min_value=0, step=1, key="sp_eggs")
-        rate = fc2.number_input("受精率 (%)", min_value=0.0, max_value=100.0,
-                                 step=0.1, key="sp_rate")
-        if st.form_submit_button("登録", type="primary"):
-            if not male_tank or not female_tank:
-                st.error("♂ と ♀ の水槽を選択してください")
-            else:
-                execute(
-                    """INSERT INTO spawning_records
-                       (spawning_date, male_parent_id, female_parent_id, egg_count, fertilization_rate)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (sdate.isoformat(), male_tank, female_tank, int(eggs), float(rate)),
-                )
-                log_action("産卵成績(手入力)",
-                           details=f"♂{male_tank} × ♀{female_tank} / "
-                                   f"卵{int(eggs)} / 受精率{rate}%")
-                st.success("産卵成績を登録しました")
-
-    st.divider()
-    st.subheader("産卵成績履歴")
-    df = fetch_df("SELECT * FROM spawning_records ORDER BY spawning_date DESC, history_id DESC")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.download_button("📥 CSVダウンロード", to_csv_bytes(df), csv_filename("spawning_records"),
-                       "text/csv", disabled=df.empty, key="dl_spawning")
-
-    if not df.empty:
-        st.subheader("受精率の推移")
-        chart_df = df.copy()
-        chart_df["spawning_date"] = pd.to_datetime(chart_df["spawning_date"])
-        chart_df = chart_df.sort_values("spawning_date").set_index("spawning_date")
-        st.line_chart(chart_df["fertilization_rate"])
-
-
-# ============================================================
-# 📔 ログ
 # ============================================================
 with tab_log:
     st.header("アクティビティログ")
