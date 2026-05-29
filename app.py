@@ -1458,6 +1458,65 @@ with tab_dash:
     df_feed_today = fetch_df(
         "SELECT * FROM feeding_logs WHERE substr(fed_at,1,10)=?", (today,)
     )
+    last_feed_log = fetch_df("SELECT fed_at FROM feeding_logs ORDER BY fed_at DESC LIMIT 1")
+    n_today = len(df_feed_today)
+    last_fed_dash = last_feed_log.iloc[0]["fed_at"] if not last_feed_log.empty else None
+    hrs_dash = hours_since(last_fed_dash)
+
+    # === 🍚 餌やり（最上部・一番見るもの） ===
+    st.markdown('<div class="zf-section-label">🍚 本日の餌やり</div>', unsafe_allow_html=True)
+    feed_done = n_today >= FEEDS_PER_DAY
+    feed_progress_color = "#5C8D5A" if feed_done else ("#B94A3A" if (hrs_dash or 0) >= FEED_ALERT_HOURS else ("#C48A2A" if (hrs_dash or 0) >= FEED_WARN_HOURS else "#1D1D1F"))
+    progress_pct = min(int(n_today / FEEDS_PER_DAY * 100), 100)
+    last_str = last_fed_dash.split(" ")[1][:5] if last_fed_dash else "—"
+    elapsed_str = f"前回から {hrs_dash:.1f} 時間" if hrs_dash is not None else "未記録"
+    big_card = f"""
+    <div style="background:rgba(255,255,255,0.62);backdrop-filter:blur(24px) saturate(180%);
+                -webkit-backdrop-filter:blur(24px) saturate(180%);
+                border:1px solid rgba(255,255,255,0.7);border-radius:22px;
+                padding:22px 28px;box-shadow:0 8px 32px rgba(75,65,50,0.10);
+                display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+      <div style="font-size:60px;line-height:1">🍚</div>
+      <div style="flex:1;min-width:240px">
+        <div style="font-size:11px;letter-spacing:0.18em;color:#6E6E73;
+                    text-transform:uppercase;font-weight:600;margin-bottom:4px">
+          TODAY'S FEEDING
+        </div>
+        <div style="font-size:36px;font-weight:700;letter-spacing:-0.02em;
+                    color:{feed_progress_color};line-height:1">
+          {n_today} / {FEEDS_PER_DAY} 回
+        </div>
+        <div style="font-size:13px;color:#6E6E73;margin-top:6px">
+          前回給餌 <b style="color:#1D1D1F">{last_str}</b>　／　{elapsed_str}
+        </div>
+        <div style="background:rgba(0,0,0,0.06);height:6px;border-radius:99px;
+                    margin-top:12px;overflow:hidden">
+          <div style="background:linear-gradient(90deg,#6E6E73,#1D1D1F);
+                      height:100%;width:{progress_pct}%;
+                      border-radius:99px"></div>
+        </div>
+      </div>
+    </div>
+    """
+    st.markdown(big_card, unsafe_allow_html=True)
+    fbc1, fbc2 = st.columns([3, 1])
+    with fbc1:
+        if feed_done:
+            st.success(f"✅ 本日の目標 {FEEDS_PER_DAY} 回達成！")
+        elif hrs_dash is not None and hrs_dash >= FEED_ALERT_HOURS:
+            st.error(f"⚠️ 前回給餌から {hrs_dash:.1f} 時間経過しています")
+        elif hrs_dash is not None and hrs_dash >= FEED_WARN_HOURS:
+            st.warning(f"前回給餌から {hrs_dash:.1f} 時間")
+    with fbc2:
+        feed_btn_label = "🍚 餌をあげた" if not feed_done else "🍚 追加で記録"
+        if st.button(feed_btn_label, type="primary", use_container_width=True,
+                     key="dash_feed_btn"):
+            execute("INSERT INTO feeding_logs (fed_at, memo) VALUES (?, ?)",
+                    (now_iso(), None))
+            log_action("餌やり", details="ダッシュボードから")
+            st.rerun()
+
+    st.markdown("<br/>", unsafe_allow_html=True)
 
     # === オーバービュー ===
     st.markdown('<div class="zf-section-label">📊 オーバービュー</div>', unsafe_allow_html=True)
@@ -1489,36 +1548,9 @@ with tab_dash:
     st.markdown("<br/>", unsafe_allow_html=True)
 
     # === 今日の状況 ===
-    st.markdown('<div class="zf-section-label">🍃 今日の状況</div>', unsafe_allow_html=True)
-    left, right = st.columns(2)
-    with left:
-        st.subheader("🍚 本日の給餌状況")
-        n_today = len(df_feed_today)
-        last_log = fetch_df("SELECT fed_at FROM feeding_logs ORDER BY fed_at DESC LIMIT 1")
-        last_fed_dash = last_log.iloc[0]["fed_at"] if not last_log.empty else None
-        hrs_dash = hours_since(last_fed_dash)
-
-        st.progress(min(n_today / FEEDS_PER_DAY, 1.0),
-                    text=f"本日 {n_today} / {FEEDS_PER_DAY} 回")
-
-        c_a, c_b = st.columns(2)
-        c_a.metric("給餌回数", f"{n_today} / {FEEDS_PER_DAY}")
-        c_b.metric("前回給餌",
-                   last_fed_dash.split(" ")[1][:5] if last_fed_dash else "—",
-                   f"{hrs_dash:.1f}時間前" if hrs_dash is not None else None)
-
-        if hrs_dash is not None and hrs_dash >= FEED_ALERT_HOURS:
-            st.error(f"⚠️ 前回給餌から {hrs_dash:.1f} 時間経過しています")
-        elif hrs_dash is not None and hrs_dash >= FEED_WARN_HOURS:
-            st.warning(f"前回給餌から {hrs_dash:.1f} 時間経過")
-
-        if st.button("🍚 餌やりタブへ", key="nav_feed", type="primary",
-                     use_container_width=True):
-            st.session_state["jump_target"] = TAB_FEED
-            st.rerun()
-
-    with right:
-        st.subheader("⚠️ 注意が必要な水槽")
+    st.markdown('<div class="zf-section-label">⚠️ 要注意</div>', unsafe_allow_html=True)
+    st.subheader("注意が必要な水槽")
+    if True:  # 元の with right: 互換のためインデントを維持
         has_alerts = False
         if df_tanks.empty:
             st.info("水槽が登録されていません")
