@@ -73,7 +73,10 @@ def render_rack_html(rack_name, df_sub):
 
     parts = [f'<div style="margin:0 0 1.5rem 0">'
              f'<h4 style="margin:0 0 8px 0">🏠 ラック {rack_name}</h4>'
-             f'<table style="border-collapse:separate;border-spacing:3px;font-size:11px;">']
+             f'<div style="overflow-x:auto;max-width:100%;'
+             f'-webkit-overflow-scrolling:touch;padding-bottom:6px">'
+             f'<table style="border-collapse:separate;border-spacing:3px;'
+             f'font-size:11px;width:max-content">']
     parts.append('<tr><th style="width:48px"></th>')
     for c in COLS:
         parts.append(f'<th style="padding:2px;color:#888;font-weight:500;width:48px">{c:02d}</th>')
@@ -106,7 +109,7 @@ def render_rack_html(rack_name, df_sub):
                 f'font-weight:500;cursor:default">{label}</td>'
             )
         parts.append('</tr>')
-    parts.append('</table></div>')
+    parts.append('</table></div></div>')
     return "".join(parts)
 
 
