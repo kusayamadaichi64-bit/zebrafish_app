@@ -1189,6 +1189,21 @@ hr {{
   font-family: {JP_FONT_STACK} !important;
 }}
 
+/* 天気チップ */
+.zf-weather-chip {{
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 500;
+}}
+
 /* === セクションラベル === */
 .zf-section-label {{
   font-size: 10px;
@@ -1324,7 +1339,46 @@ if st.session_state.mobile_mode:
     st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 
-# --- ヒーロー（JST基準） ---
+# --- ヒーロー（JST基準 + 天気） ---
+@st.cache_data(ttl=1800)  # 30分キャッシュ
+def fetch_weather():
+    """Open-Meteo（無料・APIキー不要）から東京の現在天気を取得"""
+    try:
+        import urllib.request, json
+        url = ("https://api.open-meteo.com/v1/forecast"
+               "?latitude=35.68&longitude=139.69"
+               "&current_weather=true&timezone=Asia%2FTokyo")
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            data = json.loads(resp.read())
+        cw = data.get("current_weather") or {}
+        return {"temp": cw.get("temperature"), "code": cw.get("weathercode")}
+    except Exception:
+        return None
+
+
+def weather_visual(code):
+    """Open-Meteo weather code を (ラベル, 絵文字, グラデーション) に変換"""
+    if code is None:
+        return None
+    if code == 0:
+        return ("快晴", "☀️", "linear-gradient(135deg,#4A90E2 0%,#87CEEB 50%,#FFD89B 100%)")
+    if code in (1, 2):
+        return ("晴れ", "🌤️", "linear-gradient(135deg,#5B9BD5 0%,#A8D8E8 65%,#F4E1A4 100%)")
+    if code == 3:
+        return ("曇り", "☁️", "linear-gradient(135deg,#6B7A8F 0%,#9DA9B5 100%)")
+    if code in (45, 48):
+        return ("霧", "🌫️", "linear-gradient(135deg,#8E9CA8 0%,#C8D1D9 100%)")
+    if code in (51, 53, 55, 56, 57):
+        return ("小雨", "🌦️", "linear-gradient(135deg,#4A5D7A 0%,#7E97B5 100%)")
+    if code in (61, 63, 65, 66, 67, 80, 81, 82):
+        return ("雨", "🌧️", "linear-gradient(135deg,#2C3E50 0%,#4A6580 100%)")
+    if code in (71, 73, 75, 77, 85, 86):
+        return ("雪", "❄️", "linear-gradient(135deg,#A8C5D9 0%,#E8F1F8 100%)")
+    if code in (95, 96, 99):
+        return ("雷雨", "⛈️", "linear-gradient(135deg,#1A1A2E 0%,#3D2862 100%)")
+    return None
+
+
 _today_jst = today_jst()
 weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][_today_jst.weekday()]
 _hour = now_jst().hour
@@ -1337,11 +1391,26 @@ elif 18 <= _hour < 23:
 else:
     _greeting = "おつかれさまです"
 
+_weather = fetch_weather()
+_wvis = weather_visual(_weather["code"]) if _weather else None
+if _wvis:
+    _wlabel, _wemoji, _wgrad = _wvis
+    # 暗いオーバーレイで白文字を読みやすく保つ
+    _hero_style = (f"background: linear-gradient(135deg, rgba(29,29,31,0.55), "
+                   f"rgba(44,44,46,0.50)), {_wgrad};")
+    _temp_str = f"{_weather['temp']:.0f}" if _weather.get("temp") is not None else "—"
+    _weather_chip = (
+        f'<span class="zf-weather-chip">{_wemoji} {_wlabel}　{_temp_str}°C</span>'
+    )
+else:
+    _hero_style = ""
+    _weather_chip = ""
+
 hero_html = f"""
-<div class="zf-hero">
+<div class="zf-hero" style="{_hero_style}">
   <div class="eyebrow">ZEBRAFISH MANAGEMENT</div>
   <h1>{_greeting} 🐟</h1>
-  <p class="sub">{_today_jst.strftime("%Y年 %m月 %d日")}（{weekday_jp}）・餌やり、交配、成績まで1画面で</p>
+  <p class="sub">{_today_jst.strftime("%Y年 %m月 %d日")}（{weekday_jp}）　{_weather_chip}</p>
 </div>
 """
 st.markdown(hero_html, unsafe_allow_html=True)
