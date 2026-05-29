@@ -1606,7 +1606,12 @@ with tab_trial:
     )
     male_tank_ids = male_tank_df["tank_id"].tolist()
     female_tank_ids = female_tank_df["tank_id"].tolist()
-    all_tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
+    empty_tank_df = fetch_df(
+        "SELECT tank_id, lineage, male_count, female_count, unknown_count FROM tanks "
+        "WHERE COALESCE(male_count,0) + COALESCE(female_count,0) + COALESCE(unknown_count,0) = 0 "
+        "ORDER BY tank_id"
+    )
+    empty_tank_ids = empty_tank_df["tank_id"].tolist()
 
     def _fmt_tk(df, tid):
         if not tid:
@@ -1640,7 +1645,13 @@ with tab_trial:
                     help="♀ または ? がいる水槽だけ表示されます",
                 )
             with c2:
-                breed = st.selectbox("交配用水槽", [""] + all_tank_ids)
+                breed = st.selectbox(
+                    "交配用水槽（空のタンクのみ）", [""] + empty_tank_ids,
+                    format_func=lambda t: _fmt_tk(empty_tank_df, t) if t else "（未選択）",
+                    help="現在空の水槽だけ表示されます",
+                )
+                if not empty_tank_ids:
+                    st.caption("⚠️ 空の水槽がありません。水槽管理から空きを作ってください。")
                 tc1, tc2 = st.columns(2)
                 male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01")
                 female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01")
