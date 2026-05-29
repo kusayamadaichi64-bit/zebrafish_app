@@ -1593,7 +1593,35 @@ with tab_trial:
     st.header("交配トライアル管理")
     st.caption("元水槽・交配用水槽を指定して交配を計画。個別タグで特定の魚を追跡したい時は任意で入力。")
 
-    tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
+    # ♂/♀ で水槽をフィルタ。?（不明）も両方の候補に含める
+    male_tank_df = fetch_df(
+        "SELECT tank_id, male_count, female_count, unknown_count, lineage FROM tanks "
+        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY tank_id"
+    )
+    female_tank_df = fetch_df(
+        "SELECT tank_id, male_count, female_count, unknown_count, lineage FROM tanks "
+        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY tank_id"
+    )
+    male_tank_ids = male_tank_df["tank_id"].tolist()
+    female_tank_ids = female_tank_df["tank_id"].tolist()
+    all_tank_ids = fetch_df("SELECT tank_id FROM tanks ORDER BY tank_id")["tank_id"].tolist()
+
+    def _fmt_tk(df, tid):
+        if not tid:
+            return "（未選択）"
+        r = df[df["tank_id"] == tid]
+        if r.empty:
+            return tid
+        row = r.iloc[0]
+        parts = []
+        if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
+        if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
+        if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
+        suffix = f"  ({' / '.join(parts)})" if parts else ""
+        lin = f"  ・{row['lineage']}" if row["lineage"] else ""
+        return f"{tid}{suffix}{lin}"
 
     # --- 新規計画 ---
     with st.expander("[new] ➕ 新規トライアルを計画する", expanded=False):
@@ -1601,10 +1629,18 @@ with tab_trial:
             c1, c2 = st.columns(2)
             with c1:
                 planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1))
-                src_m = st.selectbox("オス側の元水槽（戻し先）", [""] + tank_ids)
-                src_f = st.selectbox("メス側の元水槽（戻し先）", [""] + tank_ids)
+                src_m = st.selectbox(
+                    "♂ オス側の元水槽（戻し先）", [""] + male_tank_ids,
+                    format_func=lambda t: _fmt_tk(male_tank_df, t),
+                    help="♂ または ? がいる水槽だけ表示されます",
+                )
+                src_f = st.selectbox(
+                    "♀ メス側の元水槽（戻し先）", [""] + female_tank_ids,
+                    format_func=lambda t: _fmt_tk(female_tank_df, t),
+                    help="♀ または ? がいる水槽だけ表示されます",
+                )
             with c2:
-                breed = st.selectbox("交配用水槽", [""] + tank_ids)
+                breed = st.selectbox("交配用水槽", [""] + all_tank_ids)
                 tc1, tc2 = st.columns(2)
                 male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01")
                 female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01")
@@ -2214,17 +2250,24 @@ with tab_spawn:
     st.header("産卵成績")
     st.caption("水槽IDをそのまま親として記録します。同じ水槽の中身が変わっても、入居日で世代を区別できます。")
 
-    # 水槽情報
-    sp_tanks_df = fetch_df(
-        "SELECT tank_id, lineage, male_count, female_count, unknown_count "
-        "FROM tanks ORDER BY tank_id"
+    # 水槽情報（性別ごとにフィルタ）
+    sp_male_df = fetch_df(
+        "SELECT tank_id, lineage, male_count, female_count, unknown_count FROM tanks "
+        "WHERE COALESCE(male_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY tank_id"
     )
-    sp_tank_ids = sp_tanks_df["tank_id"].tolist()
+    sp_female_df = fetch_df(
+        "SELECT tank_id, lineage, male_count, female_count, unknown_count FROM tanks "
+        "WHERE COALESCE(female_count,0) > 0 OR COALESCE(unknown_count,0) > 0 "
+        "ORDER BY tank_id"
+    )
+    sp_male_ids = sp_male_df["tank_id"].tolist()
+    sp_female_ids = sp_female_df["tank_id"].tolist()
 
-    def _fmt_tank(tid):
+    def _fmt_sp_tank(df, tid):
         if not tid:
             return "（未選択）"
-        r = sp_tanks_df[sp_tanks_df["tank_id"] == tid]
+        r = df[df["tank_id"] == tid]
         if r.empty:
             return tid
         row = r.iloc[0]
@@ -2232,7 +2275,7 @@ with tab_spawn:
         if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
         if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
         if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
-        suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
+        suffix = f"  ({' / '.join(parts)})" if parts else ""
         lin = f"  ・{row['lineage']}" if row["lineage"] else ""
         return f"{tid}{suffix}{lin}"
 
@@ -2241,11 +2284,19 @@ with tab_spawn:
     with sc1:
         sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
     with sc2:
-        male_tank = st.selectbox("♂ オス側の水槽", [""] + sp_tank_ids,
-                                  format_func=_fmt_tank, key="sp_male_tank")
+        male_tank = st.selectbox(
+            "♂ オス側の水槽", [""] + sp_male_ids,
+            format_func=lambda t: _fmt_sp_tank(sp_male_df, t),
+            key="sp_male_tank",
+            help="♂ または ? がいる水槽だけ表示されます",
+        )
     with sc3:
-        female_tank = st.selectbox("♀ メス側の水槽", [""] + sp_tank_ids,
-                                    format_func=_fmt_tank, key="sp_female_tank")
+        female_tank = st.selectbox(
+            "♀ メス側の水槽", [""] + sp_female_ids,
+            format_func=lambda t: _fmt_sp_tank(sp_female_df, t),
+            key="sp_female_tank",
+            help="♀ または ? がいる水槽だけ表示されます",
+        )
 
     with st.form("spawn_form", clear_on_submit=False):
         fc1, fc2 = st.columns(2)
