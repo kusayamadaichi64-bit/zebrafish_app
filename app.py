@@ -89,8 +89,13 @@ def render_rack_html(rack_name, df_sub):
                 bg = HEALTH_COLOR.get(tank.health_status, "#E8DDC8")
                 tid = str(tank.tank_id)
                 label = tid if len(tid) <= 6 else tid[:5] + "…"
-                ind = tank.current_individual_id if pd.notna(tank.current_individual_id) else "-"
-                tip = f"ID:{tid} / 状態:{tank.health_status or '-'} / 個体:{ind}"
+                m = int(getattr(tank, "male_count", 0) or 0)
+                f = int(getattr(tank, "female_count", 0) or 0)
+                u = int(getattr(tank, "unknown_count", 0) or 0)
+                tot = m + f + u
+                count_part = "空" if tot == 0 else f"♂{m}/♀{f}/?{u}"
+                lin = getattr(tank, "lineage", None) or "-"
+                tip = f"ID:{tid} / 状態:{tank.health_status or '-'} / {count_part} / 系統:{lin}"
             parts.append(
                 f'<td title="{tip}" style="background:{bg};padding:8px 4px;'
                 f'text-align:center;border-radius:6px;color:#3C3530;'
@@ -149,14 +154,53 @@ def init_db():
                 rack                  TEXT,
                 tier                  INTEGER,
                 col_no                INTEGER,
+                male_count            INTEGER DEFAULT 0,
+                female_count          INTEGER DEFAULT 0,
+                unknown_count         INTEGER DEFAULT 0,
+                lineage               TEXT,
+                set_date              TEXT,
                 FOREIGN KEY (current_individual_id) REFERENCES individuals(individual_id)
             )
         """)
-        # マイグレーション: 旧スキーマに rack/tier/col_no が無ければ追加
+        # マイグレーション: 既存テーブルに不足列を追加
         tank_cols = [r[1] for r in c.execute("PRAGMA table_info(tanks)").fetchall()]
-        for col_def in [("rack", "TEXT"), ("tier", "INTEGER"), ("col_no", "INTEGER")]:
+        for col_def in [
+            ("rack", "TEXT"), ("tier", "INTEGER"), ("col_no", "INTEGER"),
+            ("male_count", "INTEGER DEFAULT 0"),
+            ("female_count", "INTEGER DEFAULT 0"),
+            ("unknown_count", "INTEGER DEFAULT 0"),
+            ("lineage", "TEXT"),
+            ("set_date", "TEXT"),
+        ]:
             if col_def[0] not in tank_cols:
                 c.execute(f"ALTER TABLE tanks ADD COLUMN {col_def[0]} {col_def[1]}")
+
+        # マイグレーション: 既存の current_individual_id から count/lineage を tanks にコピー
+        # （1回だけ。tanks の count が全部 0 のときに発火）
+        cur = c.execute(
+            "SELECT COUNT(*) FROM tanks "
+            "WHERE COALESCE(male_count,0)+COALESCE(female_count,0)+COALESCE(unknown_count,0) > 0"
+        )
+        if cur.fetchone()[0] == 0:
+            c.execute("""
+                UPDATE tanks SET
+                    male_count = COALESCE((
+                        SELECT i.male_count FROM individuals i
+                        WHERE i.individual_id = tanks.current_individual_id), 0),
+                    female_count = COALESCE((
+                        SELECT i.female_count FROM individuals i
+                        WHERE i.individual_id = tanks.current_individual_id), 0),
+                    unknown_count = COALESCE((
+                        SELECT i.unknown_count FROM individuals i
+                        WHERE i.individual_id = tanks.current_individual_id), 0),
+                    lineage = COALESCE((
+                        SELECT i.lineage FROM individuals i
+                        WHERE i.individual_id = tanks.current_individual_id), lineage),
+                    set_date = COALESCE((
+                        SELECT i.birth_date FROM individuals i
+                        WHERE i.individual_id = tanks.current_individual_id), set_date)
+                WHERE current_individual_id IS NOT NULL
+            """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS spawning_records (
                 history_id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1262,7 +1306,7 @@ hero_html = f"""
 st.markdown(hero_html, unsafe_allow_html=True)
 
 (tab_dash, tab_feed, tab_trial, tab_analysis, tab_rack,
- tab_tank, tab_ind, tab_spawn, tab_log) = st.tabs(
+ tab_tank, tab_spawn, tab_log) = st.tabs(
     [
         "📊 ダッシュボード",
         "🍚 餌やり",
@@ -1270,7 +1314,6 @@ st.markdown(hero_html, unsafe_allow_html=True)
         "📈 成績分析",
         "📐 棚ビュー",
         "🪣 水槽管理",
-        "🐠 個体管理",
         "🥚 産卵成績",
         "📔 ログ",
     ]
@@ -1281,7 +1324,7 @@ st.markdown(hero_html, unsafe_allow_html=True)
 # 📊 ダッシュボード
 # ============================================================
 # タブインデックス（タブ並び順と一致させる）
-TAB_DASH, TAB_FEED, TAB_TRIAL, TAB_ANALYSIS, TAB_RACK, TAB_TANK, TAB_IND, TAB_SPAWN, TAB_LOG = range(9)
+TAB_DASH, TAB_FEED, TAB_TRIAL, TAB_ANALYSIS, TAB_RACK, TAB_TANK, TAB_SPAWN, TAB_LOG = range(8)
 
 with tab_dash:
     # === タブジャンプ要求が積まれていたら、JSで該当タブをクリックして遷移 ===
@@ -1290,9 +1333,14 @@ with tab_dash:
         jump_to_tab(int(_idx))
 
     df_tanks = fetch_df("SELECT * FROM tanks")
-    df_inds = fetch_df("SELECT * FROM individuals")
     df_spawn = fetch_df("SELECT * FROM spawning_records")
     df_trials = fetch_df("SELECT * FROM mating_trials")
+    # 総匹数（全水槽合算）
+    total_fish = 0
+    if not df_tanks.empty:
+        total_fish = int(
+            df_tanks[["male_count", "female_count", "unknown_count"]].fillna(0).sum().sum()
+        )
 
     today = today_jst().isoformat()
     df_feed_today = fetch_df(
@@ -1303,7 +1351,7 @@ with tab_dash:
     st.markdown('<div class="zf-section-label">📊 オーバービュー</div>', unsafe_allow_html=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("🪣 水槽数", len(df_tanks))
-    col2.metric("🐠 個体数", len(df_inds))
+    col2.metric("🐠 総匹数", total_fish)
     col3.metric("🥚 産卵記録", len(df_spawn))
     alert_count = int((df_tanks["health_status"] == "要観察").sum()) if not df_tanks.empty else 0
     col4.metric("⚠️ 要観察", alert_count)
@@ -1367,16 +1415,27 @@ with tab_dash:
             isolated_df = df_tanks[df_tanks["health_status"] == "隔離中"]
             if alert_df.empty and isolated_df.empty:
                 st.success("すべての水槽が良好です 🎉")
+            def _alert_view(d):
+                def _fmt(r):
+                    m = int(r.get("male_count") or 0)
+                    f = int(r.get("female_count") or 0)
+                    u = int(r.get("unknown_count") or 0)
+                    if m + f + u == 0:
+                        return "空"
+                    return f"♂{m} / ♀{f} / ？{u}"
+                d = d.copy()
+                d["匹数"] = d.apply(_fmt, axis=1)
+                return d[["tank_id", "匹数", "lineage", "memo"]].rename(
+                    columns={"tank_id": "水槽ID", "lineage": "系統", "memo": "メモ"})
+
             if not alert_df.empty:
                 has_alerts = True
                 st.warning("【要観察】")
-                st.dataframe(alert_df[["tank_id", "current_individual_id", "memo"]],
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_alert_view(alert_df), use_container_width=True, hide_index=True)
             if not isolated_df.empty:
                 has_alerts = True
                 st.error("【隔離中】")
-                st.dataframe(isolated_df[["tank_id", "current_individual_id", "memo"]],
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_alert_view(isolated_df), use_container_width=True, hide_index=True)
         if has_alerts and st.button("🪣 水槽管理タブで対応", key="nav_tank",
                                      use_container_width=True):
             st.session_state["jump_target"] = TAB_TANK
@@ -1408,20 +1467,17 @@ with tab_dash:
     # === データエクスポート ===
     st.markdown('<div class="zf-section-label">📥 データエクスポート</div>', unsafe_allow_html=True)
     st.subheader("CSV ダウンロード")
-    d1, d2, d3, d4, d5 = st.columns(5)
+    d1, d2, d3, d4 = st.columns(4)
     with d1:
         st.download_button("水槽", to_csv_bytes(df_tanks), csv_filename("tanks"),
                            "text/csv", disabled=df_tanks.empty, use_container_width=True)
     with d2:
-        st.download_button("個体", to_csv_bytes(df_inds), csv_filename("individuals"),
-                           "text/csv", disabled=df_inds.empty, use_container_width=True)
-    with d3:
         st.download_button("産卵成績", to_csv_bytes(df_spawn), csv_filename("spawning_records"),
                            "text/csv", disabled=df_spawn.empty, use_container_width=True)
-    with d4:
+    with d3:
         st.download_button("給餌ログ", to_csv_bytes(fetch_df("SELECT * FROM feeding_logs")),
                            csv_filename("feeding_logs"), "text/csv", use_container_width=True)
-    with d5:
+    with d4:
         st.download_button("トライアル", to_csv_bytes(df_trials), csv_filename("mating_trials"),
                            "text/csv", disabled=df_trials.empty, use_container_width=True)
 
@@ -1618,11 +1674,14 @@ with tab_trial:
                                                   step=0.1, key=f"rate_{tid}")
                         sub = st.form_submit_button("登録", type="primary")
                         if sub:
+                            # 親は元水槽IDを使う（新モデルでは tank_id ベース）
+                            parent_m = t.get("source_tank_male") if pd.notna(t.get("source_tank_male")) else None
+                            parent_f = t.get("source_tank_female") if pd.notna(t.get("source_tank_female")) else None
                             hist_id = execute(
                                 """INSERT INTO spawning_records
                                    (spawning_date, male_parent_id, female_parent_id, egg_count, fertilization_rate)
                                    VALUES (?, ?, ?, ?, ?)""",
-                                (t["planned_date"], t["male_id"], t["female_id"], int(eggs), float(rate)),
+                                (t["planned_date"], parent_m, parent_f, int(eggs), float(rate)),
                             )
                             execute(
                                 """UPDATE mating_trials
@@ -1664,7 +1723,7 @@ with tab_trial:
 # ============================================================
 with tab_analysis:
     st.header("成績分析")
-    st.caption("過去の産卵成績から、成功率の高い個体・ペアを自動で算出します")
+    st.caption("過去の産卵成績から、成功率の高い水槽・ペアを自動で算出します")
 
     df_spawn = fetch_df("SELECT * FROM spawning_records")
     if df_spawn.empty:
@@ -1687,18 +1746,18 @@ with tab_analysis:
             g["信頼度"] = g["試行回数"].apply(lambda n: "⭐" * min(int(n // 3) + 1, 3) if n >= 1 else "")
             return g.sort_values(["成功率(%)", "試行回数"], ascending=[False, False])
 
-        st.subheader("♂ オス別ランキング")
+        st.subheader("♂ オス側水槽ランキング")
         st.dataframe(
-            aggregate("male_parent_id", "オスID")[
-                ["オスID", "試行回数", "成功率(%)", "平均採卵数", "平均受精率", "最終試行日", "信頼度"]
+            aggregate("male_parent_id", "♂水槽")[
+                ["♂水槽", "試行回数", "成功率(%)", "平均採卵数", "平均受精率", "最終試行日", "信頼度"]
             ],
             use_container_width=True, hide_index=True,
         )
 
-        st.subheader("♀ メス別ランキング")
+        st.subheader("♀ メス側水槽ランキング")
         st.dataframe(
-            aggregate("female_parent_id", "メスID")[
-                ["メスID", "試行回数", "成功率(%)", "平均採卵数", "平均受精率", "最終試行日", "信頼度"]
+            aggregate("female_parent_id", "♀水槽")[
+                ["♀水槽", "試行回数", "成功率(%)", "平均採卵数", "平均受精率", "最終試行日", "信頼度"]
             ],
             use_container_width=True, hide_index=True,
         )
@@ -1789,32 +1848,10 @@ with tab_rack:
 with tab_tank:
     st.header("水槽管理")
     st.caption(f"配置：{len(RACKS)}ラック × {len(TIERS)}段 × {len(COLS)}列 = "
-               f"最大 {len(RACKS)*len(TIERS)*len(COLS)} 水槽")
-
-    groups_df = fetch_df(
-        "SELECT individual_id, lineage, male_count, female_count, unknown_count "
-        "FROM individuals ORDER BY individual_id"
-    )
-    ind_ids = groups_df["individual_id"].tolist()
-
-    def fmt_group(gid):
-        if not gid:
-            return "（未指定）"
-        row = groups_df[groups_df["individual_id"] == gid]
-        if row.empty:
-            return gid
-        r = row.iloc[0]
-        parts = []
-        if int(r["male_count"] or 0) > 0:    parts.append(f"♂{int(r['male_count'])}")
-        if int(r["female_count"] or 0) > 0:  parts.append(f"♀{int(r['female_count'])}")
-        if int(r["unknown_count"] or 0) > 0: parts.append(f"？{int(r['unknown_count'])}")
-        suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
-        lin = f"  ・{r['lineage']}" if r["lineage"] else ""
-        return f"{gid}{suffix}{lin}"
-
-    st.subheader("水槽の登録 / 更新")
+               f"最大 {len(RACKS)*len(TIERS)*len(COLS)} 水槽　／　水槽に魚情報を直接記録します。")
 
     # === 場所セレクタは form の外（水槽IDが入力に追従して即時表示） ===
+    st.subheader("新規登録 / 内容更新")
     st.markdown("**場所**（ラック - 段 - 列）")
     lc1, lc2, lc3 = st.columns(3)
     rack = lc1.selectbox("ラック", [""] + RACKS, key="form_rack")
@@ -1826,8 +1863,14 @@ with tab_tank:
         tier_str or None,
         int(col_str) if col_str else None,
     )
-    _existing_tanks = fetch_df("SELECT tank_id FROM tanks")["tank_id"].tolist()
+    _existing_tanks_df = fetch_df(
+        "SELECT tank_id, male_count, female_count, unknown_count, lineage, "
+        "set_date, health_status, memo FROM tanks"
+    )
+    _existing_tanks = _existing_tanks_df["tank_id"].tolist()
     _tank_exists = tank_id_auto and tank_id_auto in _existing_tanks
+    _existing_row = (_existing_tanks_df[_existing_tanks_df["tank_id"] == tank_id_auto].iloc[0]
+                     if _tank_exists else None)
     _tank_note = (
         '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
         if _tank_exists else ''
@@ -1841,110 +1884,119 @@ with tab_tank:
         unsafe_allow_html=True,
     )
 
-    # === 段＋列 に対応する群を自動セット ===
-    # ルール: 群ID = {段}{NNN}{YYMMDD}（10桁）。列番号 01 → NNN=001、列 12 → NNN=012。
-    # tier=C & col=01 を選ぶと、'C001' で始まる群のうち最新（日付順）を初期表示。
-    _suggested_group = ""
-    _match_prefix = ""
-    if tier_str and col_str:
-        try:
-            _col_int = int(col_str)
-            _match_prefix = f"{tier_str}{_col_int:03d}"   # 例: 'C001', 'C012'
-            _latest = fetch_df(
-                "SELECT individual_id FROM individuals "
-                "WHERE individual_id LIKE ? AND length(individual_id) = 10 "
-                "ORDER BY substr(individual_id, 5, 6) DESC LIMIT 1",
-                (f"{_match_prefix}%",),
-            )
-            if not _latest.empty:
-                cand = _latest["individual_id"].iloc[0]
-                if cand in ind_ids:
-                    _suggested_group = cand
-        except (ValueError, TypeError):
-            pass
-
-    # 段または列が変わったタイミングで session_state を更新
-    _sig = f"{tier_str}|{col_str}"
-    if st.session_state.get("_tk_group_sig") != _sig:
-        st.session_state["_tk_group_sig"] = _sig
-        st.session_state["tk_group"] = _suggested_group if _suggested_group in ind_ids else ""
-
-    if _match_prefix:
-        if _suggested_group:
-            st.caption(
-                f"💡 `{_match_prefix}` で始まる最新群を自動選択中：**{_suggested_group}**　"
-                "（手動で別の群に変更も可）"
-            )
-        else:
-            st.caption(
-                f"💡 `{_match_prefix}` で始まる群はまだありません。"
-                "個体管理タブで新規登録してください。"
-            )
+    # 既存タンクが選ばれたら現値を初期値に
+    if _tank_exists and st.session_state.get("_tk_loaded_for") != tank_id_auto:
+        st.session_state["_tk_loaded_for"] = tank_id_auto
+        st.session_state["tk_m"] = int(_existing_row["male_count"] or 0)
+        st.session_state["tk_f"] = int(_existing_row["female_count"] or 0)
+        st.session_state["tk_u"] = int(_existing_row["unknown_count"] or 0)
+        st.session_state["tk_lineage"] = _existing_row["lineage"] or ""
+        st.session_state["tk_health"] = _existing_row["health_status"] or "良好"
+        st.session_state["tk_memo"] = _existing_row["memo"] or ""
 
     with st.form("tank_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            current_ind = st.selectbox(
-                "入っている群", [""] + ind_ids,
-                format_func=fmt_group,
-                help="段を変えると、その段の最新の群IDが自動選択されます",
-                key="tk_group",
-            )
+            lineage = st.text_input("系統名（例: AB, TU, WIK）", key="tk_lineage")
             health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health")
         with c2:
-            memo = st.text_area("メモ", height=80, key="tk_memo")
+            st.markdown("**匹数（性別ごと）**")
+            mc1, mc2, mc3 = st.columns(3)
+            tk_m = mc1.number_input("♂ オス", min_value=0, step=1, value=0, key="tk_m")
+            tk_f = mc2.number_input("♀ メス", min_value=0, step=1, value=0, key="tk_f")
+            tk_u = mc3.number_input("？ 不明", min_value=0, step=1, value=0, key="tk_u")
+            tk_total = int(tk_m) + int(tk_f) + int(tk_u)
+            tk_label = "空" if tk_total == 0 else f"{tk_total} 匹"
+            st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
+                        f"合計 <b style='color:#1D1D1F;font-size:18px'>{tk_label}</b></div>",
+                        unsafe_allow_html=True)
+        memo = st.text_area("メモ", height=70, key="tk_memo")
 
         if st.form_submit_button("登録 / 更新", type="primary"):
             if not tank_id_auto:
                 st.error("ラック・段・列をすべて選んでください（水槽IDが生成されません）")
             else:
+                set_date_v = (now_iso() if not _tank_exists
+                              else (_existing_row["set_date"] or now_iso()))
                 execute(
-                    """INSERT INTO tanks (tank_id, current_individual_id, health_status, memo, rack, tier, col_no)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """INSERT INTO tanks (tank_id, rack, tier, col_no, health_status, memo,
+                                          male_count, female_count, unknown_count, lineage, set_date)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(tank_id) DO UPDATE SET
-                         current_individual_id=excluded.current_individual_id,
-                         health_status=excluded.health_status,
-                         memo=excluded.memo,
-                         rack=excluded.rack,
-                         tier=excluded.tier,
-                         col_no=excluded.col_no""",
-                    (tank_id_auto, current_ind or None, health, memo,
-                     rack, tier_str, int(col_str)),
+                         rack=excluded.rack, tier=excluded.tier, col_no=excluded.col_no,
+                         health_status=excluded.health_status, memo=excluded.memo,
+                         male_count=excluded.male_count, female_count=excluded.female_count,
+                         unknown_count=excluded.unknown_count, lineage=excluded.lineage""",
+                    (tank_id_auto, rack, tier_str, int(col_str), health, memo,
+                     int(tk_m), int(tk_f), int(tk_u), lineage or None, set_date_v),
                 )
                 log_action("水槽登録/更新", target=tank_id_auto,
-                           details=f"群: {current_ind or '空'} / {health}")
-                st.success(f"水槽 {tank_id_auto} を登録/更新しました")
+                           details=f"♂{int(tk_m)} / ♀{int(tk_f)} / ?{int(tk_u)} / {health}")
+                st.success(f"水槽 {tank_id_auto}（{tk_label}）を登録/更新しました")
                 st.rerun()
+
+    st.divider()
+
+    # === スワップ機能 ===
+    with st.expander("[swap] 🔄 2水槽の中身をスワップする", expanded=False):
+        st.caption("選んだ2水槽の **中身（匹数・系統・健康状態・メモ）** を入れ替えます。場所（ラック/段/列/水槽ID）はそのままです。")
+        if len(_existing_tanks) < 2:
+            st.info("スワップには水槽が2つ以上必要です")
+        else:
+            sw1, sw2 = st.columns(2)
+            tank_a = sw1.selectbox("水槽 A", _existing_tanks, key="swap_a")
+            tank_b = sw2.selectbox("水槽 B", _existing_tanks, key="swap_b",
+                                    index=min(1, len(_existing_tanks) - 1))
+            if st.button("🔄 スワップ実行", type="primary", key="swap_btn"):
+                if tank_a == tank_b:
+                    st.error("違う水槽を2つ選んでください")
+                else:
+                    with get_conn() as conn:
+                        row_a = conn.execute(
+                            "SELECT male_count, female_count, unknown_count, lineage, "
+                            "set_date, health_status, memo FROM tanks WHERE tank_id=?",
+                            (tank_a,),
+                        ).fetchone()
+                        row_b = conn.execute(
+                            "SELECT male_count, female_count, unknown_count, lineage, "
+                            "set_date, health_status, memo FROM tanks WHERE tank_id=?",
+                            (tank_b,),
+                        ).fetchone()
+                        for tid, src in [(tank_a, row_b), (tank_b, row_a)]:
+                            conn.execute(
+                                "UPDATE tanks SET male_count=?, female_count=?, unknown_count=?, "
+                                "lineage=?, set_date=?, health_status=?, memo=? WHERE tank_id=?",
+                                (*src, tid),
+                            )
+                        conn.commit()
+                    log_action("水槽スワップ", target=f"{tank_a} ↔ {tank_b}")
+                    st.success(f"水槽 {tank_a} と {tank_b} の中身を入れ替えました")
+                    st.rerun()
 
     st.divider()
     st.subheader("登録済み水槽")
 
     df = fetch_df(
-        "SELECT t.*, "
-        "(COALESCE(i.male_count,0)+COALESCE(i.female_count,0)+COALESCE(i.unknown_count,0)) AS group_total, "
-        "i.male_count   AS group_m, "
-        "i.female_count AS group_f, "
-        "i.unknown_count AS group_u, "
-        "i.lineage      AS group_lineage "
-        "FROM tanks t LEFT JOIN individuals i ON t.current_individual_id = i.individual_id "
-        "ORDER BY t.rack, t.tier, t.col_no, t.tank_id"
+        "SELECT tank_id, rack, tier, col_no, male_count, female_count, unknown_count, "
+        "lineage, set_date, health_status, memo "
+        "FROM tanks ORDER BY rack, tier, col_no, tank_id"
     )
     if not df.empty:
         df["場所"] = df.apply(
             lambda r: format_location(r["rack"], r["tier"], r["col_no"]), axis=1
         )
 
-        def fmt_group_row(r):
-            gid = r["current_individual_id"]
-            if not gid or pd.isna(gid):
-                return ""
+        def fmt_counts_row(r):
+            m, f, u = int(r["male_count"] or 0), int(r["female_count"] or 0), int(r["unknown_count"] or 0)
+            tot = m + f + u
+            if tot == 0:
+                return "空"
             parts = []
-            if (r.get("group_m") or 0) > 0: parts.append(f"♂{int(r['group_m'])}")
-            if (r.get("group_f") or 0) > 0: parts.append(f"♀{int(r['group_f'])}")
-            if (r.get("group_u") or 0) > 0: parts.append(f"？{int(r['group_u'])}")
-            suffix = f" ({' / '.join(parts)})" if parts else " (空)"
-            return f"{gid}{suffix}"
-        df["入っている群"] = df.apply(fmt_group_row, axis=1)
+            if m > 0: parts.append(f"♂{m}")
+            if f > 0: parts.append(f"♀{f}")
+            if u > 0: parts.append(f"？{u}")
+            return " / ".join(parts) + f"  計{tot}"
+        df["匹数"] = df.apply(fmt_counts_row, axis=1)
 
         # フィルタ
         fc1, fc2, fc3 = st.columns(3)
@@ -1962,8 +2014,11 @@ with tab_tank:
 
         st.caption(f"表示中: {len(view)} / 全 {len(df)} 水槽")
         st.dataframe(
-            view[["tank_id", "場所", "入っている群", "health_status", "memo"]].rename(
-                columns={"tank_id": "水槽ID", "health_status": "健康状態", "memo": "メモ"}
+            view[["tank_id", "場所", "匹数", "lineage", "health_status",
+                  "set_date", "memo"]].rename(
+                columns={"tank_id": "水槽ID", "lineage": "系統",
+                         "health_status": "健康状態", "set_date": "入居日",
+                         "memo": "メモ"}
             ),
             use_container_width=True, hide_index=True,
         )
@@ -1977,13 +2032,12 @@ with tab_tank:
     # ----------------------------------------------------------------
     # CSV 一括インポート
     # ----------------------------------------------------------------
-    with st.expander("[import] 📤 CSV 一括インポート（240水槽まとめて登録）", expanded=False):
+    with st.expander("[import] 📤 CSV 一括インポート", expanded=False):
         st.markdown(
             "Excelで水槽リストを作って一気に登録できます。"
             "**同じ tank_id があれば上書き、無ければ新規登録** されます。"
         )
 
-        # テンプレート
         template_rows = []
         for r in RACKS[:1]:
             for t in TIERS[:2]:
@@ -1991,14 +2045,16 @@ with tab_tank:
                     template_rows.append({
                         "tank_id": f"{r}-{t}-{c:02d}",
                         "rack": r, "tier": t, "col_no": c,
+                        "male_count": 5, "female_count": 3, "unknown_count": 0,
+                        "lineage": "AB",
                         "health_status": "良好",
-                        "current_individual_id": "",
                         "memo": "",
                     })
         template_df = pd.DataFrame(
             template_rows,
             columns=["tank_id", "rack", "tier", "col_no",
-                     "health_status", "current_individual_id", "memo"],
+                     "male_count", "female_count", "unknown_count",
+                     "lineage", "health_status", "memo"],
         )
         st.download_button(
             "📄 テンプレートCSVをダウンロード",
@@ -2008,13 +2064,13 @@ with tab_tank:
             key="dl_template",
         )
         st.caption(
-            "必須列：tank_id, rack, tier, col_no　／　任意列：health_status, current_individual_id, memo"
+            "必須列：tank_id, rack, tier, col_no　／　任意列：male_count, "
+            "female_count, unknown_count, lineage, health_status, memo"
         )
 
         uploaded = st.file_uploader("CSVファイルを選択", type=["csv"], key="csv_upload")
         if uploaded is not None:
             try:
-                # BOM付きでも普通でも読めるよう utf-8-sig
                 up_df = pd.read_csv(uploaded, encoding="utf-8-sig", dtype=str).fillna("")
             except Exception as e:
                 st.error(f"CSV読み込みエラー：{e}")
@@ -2026,7 +2082,6 @@ with tab_tank:
                 if len(up_df) > 20:
                     st.caption(f"...残り {len(up_df) - 20} 行はインポート時に処理します")
 
-                # 検証
                 errors = []
                 warnings_list = []
 
@@ -2038,7 +2093,7 @@ with tab_tank:
                 if not errors:
                     bad_rows = []
                     for i, row in up_df.iterrows():
-                        rownum = i + 2  # 1行目はヘッダなので+2
+                        rownum = i + 2
                         if not str(row["tank_id"]).strip():
                             bad_rows.append(f"行{rownum}: tank_id が空")
                             continue
@@ -2059,20 +2114,19 @@ with tab_tank:
                         if "health_status" in up_df.columns:
                             hs = str(row["health_status"]).strip()
                             if hs and hs not in ["良好", "要観察", "隔離中"]:
-                                bad_rows.append(f"行{rownum}: health_status='{hs}' は [良好/要観察/隔離中] のいずれか")
+                                bad_rows.append(f"行{rownum}: health_status='{hs}' は [良好/要観察/隔離中]")
 
                     if bad_rows:
                         errors.extend(bad_rows[:20])
                         if len(bad_rows) > 20:
                             errors.append(f"...他に {len(bad_rows) - 20} 件のエラー")
 
-                    # 重複 tank_id
                     dups = up_df["tank_id"][up_df["tank_id"].duplicated()].unique().tolist()
                     if len(dups):
                         warnings_list.append(f"CSV内で重複する tank_id: {dups[:10]}")
 
                 if errors:
-                    st.error("❌ 検証エラーがあります（修正してから再アップロードしてください）")
+                    st.error("❌ 検証エラーがあります")
                     for e in errors:
                         st.write(f"- {e}")
                 else:
@@ -2088,22 +2142,25 @@ with tab_tank:
                                     tier_v = str(row.get("tier", "")).strip() or None
                                     col_v = int(float(row["col_no"])) if str(row.get("col_no", "")).strip() else None
                                     hs_v = str(row.get("health_status", "")).strip() or "良好"
-                                    ind_v = str(row.get("current_individual_id", "")).strip() or None
                                     memo_v = str(row.get("memo", "")).strip() or None
+                                    lin_v = str(row.get("lineage", "")).strip() or None
+                                    mc = int(float(row.get("male_count", "") or 0))
+                                    fc = int(float(row.get("female_count", "") or 0))
+                                    uc = int(float(row.get("unknown_count", "") or 0))
                                     conn.execute(
                                         """INSERT INTO tanks
-                                           (tank_id, current_individual_id, health_status, memo,
-                                            rack, tier, col_no)
-                                           VALUES (?, ?, ?, ?, ?, ?, ?)
+                                           (tank_id, rack, tier, col_no, health_status, memo,
+                                            male_count, female_count, unknown_count, lineage, set_date)
+                                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                            ON CONFLICT(tank_id) DO UPDATE SET
-                                             current_individual_id=excluded.current_individual_id,
-                                             health_status=excluded.health_status,
-                                             memo=excluded.memo,
-                                             rack=excluded.rack,
-                                             tier=excluded.tier,
-                                             col_no=excluded.col_no""",
-                                        (str(row["tank_id"]).strip(), ind_v, hs_v, memo_v,
-                                         rack_v, tier_v, col_v),
+                                             rack=excluded.rack, tier=excluded.tier, col_no=excluded.col_no,
+                                             health_status=excluded.health_status, memo=excluded.memo,
+                                             male_count=excluded.male_count,
+                                             female_count=excluded.female_count,
+                                             unknown_count=excluded.unknown_count,
+                                             lineage=excluded.lineage""",
+                                        (str(row["tank_id"]).strip(), rack_v, tier_v, col_v,
+                                         hs_v, memo_v, mc, fc, uc, lin_v, now_iso()),
                                     )
                                     ok += 1
                                 except Exception:
@@ -2121,439 +2178,46 @@ with tab_tank:
                 st.rerun()
 
 
-# ============================================================
-# 🐠 個体管理（群 = 個体グループ）
-# ============================================================
-with tab_ind:
-    st.header("個体管理（群）")
-    st.caption(
-        "ゼブラフィッシュは見た目で個体識別できないため、**群（コホート）単位**で管理します。"
-        " 1つの群ID = 同じ系統・同じ世代の魚の集まり。性別ごとに匹数を入力してください。"
-    )
-
-    # 既存IDの一覧（重複防止用）
-    _existing_ids = fetch_df("SELECT individual_id FROM individuals")["individual_id"].tolist()
-
-    # === 既存の群を編集（プルダウンから選んで数だけ変更） ===
-    _all_groups = fetch_df(
-        "SELECT individual_id, lineage, male_count, female_count, unknown_count "
-        "FROM individuals ORDER BY individual_id"
-    )
-    with st.expander("[edit] 📝 既存の群を編集（数や系統だけ更新）", expanded=False):
-        if _all_groups.empty:
-            st.info("まだ群が登録されていません")
-        else:
-            def _fmt_edit(gid):
-                r = _all_groups[_all_groups["individual_id"] == gid].iloc[0]
-                m, f, u = int(r["male_count"] or 0), int(r["female_count"] or 0), int(r["unknown_count"] or 0)
-                tot = m + f + u
-                tail = "空" if tot == 0 else f"♂{m} / ♀{f} / ？{u}"
-                lin = f"・{r['lineage']}" if r["lineage"] else ""
-                return f"{gid}  ({tail}) {lin}"
-
-            edit_id = st.selectbox(
-                "編集する群", _all_groups["individual_id"].tolist(),
-                format_func=_fmt_edit, key="edit_group_sel",
-            )
-            cur_row = _all_groups[_all_groups["individual_id"] == edit_id].iloc[0]
-
-            with st.form("edit_group_form", clear_on_submit=False):
-                ec1, ec2 = st.columns(2)
-                with ec1:
-                    e_lineage = st.text_input(
-                        "系統名", value=cur_row["lineage"] or "",
-                        key=f"e_lin_{edit_id}",
-                    )
-                with ec2:
-                    ecm1, ecm2, ecm3 = st.columns(3)
-                    e_m = ecm1.number_input("♂ オス", min_value=0, step=1,
-                                              value=int(cur_row["male_count"] or 0),
-                                              key=f"e_m_{edit_id}")
-                    e_f = ecm2.number_input("♀ メス", min_value=0, step=1,
-                                              value=int(cur_row["female_count"] or 0),
-                                              key=f"e_f_{edit_id}")
-                    e_u = ecm3.number_input("？ 不明", min_value=0, step=1,
-                                              value=int(cur_row["unknown_count"] or 0),
-                                              key=f"e_u_{edit_id}")
-                    e_tot = int(e_m) + int(e_f) + int(e_u)
-                    e_tot_label = "空" if e_tot == 0 else f"{e_tot} 匹"
-                    st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
-                                f"合計 <b style='color:#1D1D1F;font-size:18px'>{e_tot_label}</b></div>",
-                                unsafe_allow_html=True)
-
-                if st.form_submit_button("💾 更新", type="primary"):
-                    if e_tot == 0:
-                        sex_v = None
-                    elif e_m > 0 and e_f == 0 and e_u == 0: sex_v = "オス"
-                    elif e_f > 0 and e_m == 0 and e_u == 0: sex_v = "メス"
-                    else: sex_v = "混合"
-                    execute(
-                        "UPDATE individuals SET male_count=?, female_count=?, "
-                        "unknown_count=?, lineage=?, sex=? WHERE individual_id=?",
-                        (int(e_m), int(e_f), int(e_u), e_lineage or None, sex_v, edit_id),
-                    )
-                    log_action("群更新", target=edit_id,
-                               details=f"♂{int(e_m)} / ♀{int(e_f)} / ?{int(e_u)}")
-                    st.success(f"群 {edit_id} を更新しました")
-                    st.rerun()
-
-    st.subheader("群の登録 / 更新")
-
-    # === ライブプレビュー部 (form の外 = 入力するたびに即時更新) ===
-    pc1, pc2, pc3 = st.columns([1, 1, 2])
-    with pc1:
-        rack_letter = st.selectbox("段", RACKS, key="ind_rack",
-                                    help="サイドバーから段の追加・削除ができます")
-    # 同じ (段, 日) の既存番号から「最小の空き番号」を計算（ギャップ埋め）
-    _today_str = today_jst().strftime("%y%m%d")
-    _today_seqs = set(int(i[1:4]) for i in _existing_ids
-                       if len(i) == 10 and i[0] == rack_letter
-                       and i[4:10] == _today_str and i[1:4].isdigit())
-    _suggested_seq = 1
-    while _suggested_seq in _today_seqs:
-        _suggested_seq += 1
-    with pc2:
-        seq_no = st.number_input(
-            "番号（001〜999）", min_value=1, max_value=999,
-            value=int(_suggested_seq), step=1, key="ind_seq",
-            help="この日・この段で何番目か。次の空き番号を初期表示しています。",
-        )
-    with pc3:
-        entry_date = st.date_input("入力日", value=today_jst(), key="ind_date")
-
-    auto_id = f"{rack_letter}{int(seq_no):03d}{entry_date.strftime('%y%m%d')}"
-    already = auto_id in _existing_ids
-    overwrite_note = (
-        '　<span style="color:#BE8763;font-family:inherit">※ 既存IDのため上書きされます</span>'
-        if already else ''
-    )
-    st.markdown(
-        "<div style='margin:6px 0 14px 0;padding:12px 16px;"
-        "background:rgba(255,255,255,0.7);border:1px solid #E5E5EA;"
-        "border-radius:14px;font-family:ui-monospace,Menlo,monospace;"
-        f"font-size:16px;color:#1D1D1F'>"
-        f"群ID（自動生成）：<b style='font-size:18px'>{auto_id}</b>{overwrite_note}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # === 残りの入力は form の中（送信時にまとめて処理） ===
-    with st.form("ind_form", clear_on_submit=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            lineage = st.text_input("系統名（例: AB, TU, WIK）", key="ind_lineage")
-        with c2:
-            st.markdown("**匹数（性別ごと）**")
-            mc1, mc2, mc3 = st.columns(3)
-            male_cnt = mc1.number_input("♂ オス", min_value=0, step=1, value=0, key="ind_m")
-            female_cnt = mc2.number_input("♀ メス", min_value=0, step=1, value=0, key="ind_f")
-            unknown_cnt = mc3.number_input("？ 不明", min_value=0, step=1, value=0, key="ind_u",
-                                           help="性別未判定の若い魚など")
-            total = int(male_cnt) + int(female_cnt) + int(unknown_cnt)
-            st.markdown(f"<div style='margin-top:8px;font-size:13px;color:#6E6E73'>"
-                        f"合計 <b style='color:#1D1D1F;font-size:18px'>{total}</b> 匹</div>",
-                        unsafe_allow_html=True)
-
-        if st.form_submit_button("登録 / 更新", type="primary"):
-            if total == 0:
-                sex_v = None
-            elif male_cnt > 0 and female_cnt == 0 and unknown_cnt == 0:
-                sex_v = "オス"
-            elif female_cnt > 0 and male_cnt == 0 and unknown_cnt == 0:
-                sex_v = "メス"
-            else:
-                sex_v = "混合"
-            execute(
-                """INSERT INTO individuals
-                   (individual_id, birth_date, sex, lineage,
-                    male_count, female_count, unknown_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(individual_id) DO UPDATE SET
-                     birth_date=excluded.birth_date,
-                     sex=excluded.sex,
-                     lineage=excluded.lineage,
-                     male_count=excluded.male_count,
-                     female_count=excluded.female_count,
-                     unknown_count=excluded.unknown_count""",
-                (auto_id, entry_date.isoformat(), sex_v, lineage,
-                 int(male_cnt), int(female_cnt), int(unknown_cnt)),
-            )
-            label = "空" if total == 0 else f"合計 {total} 匹"
-            log_action("群登録/更新", target=auto_id,
-                       details=f"♂{int(male_cnt)} / ♀{int(female_cnt)} / ?{int(unknown_cnt)}")
-            st.success(f"群 {auto_id}（{label}）を登録/更新しました")
-            st.rerun()
-
-    st.divider()
-    st.subheader("登録済みの群")
-    df = fetch_df(
-        "SELECT individual_id AS 群ID, lineage AS 系統, birth_date AS 入力日, "
-        "COALESCE(male_count,0) AS 'オス', "
-        "COALESCE(female_count,0) AS 'メス', "
-        "COALESCE(unknown_count,0) AS '不明', "
-        "(COALESCE(male_count,0)+COALESCE(female_count,0)+COALESCE(unknown_count,0)) AS '_total' "
-        "FROM individuals ORDER BY 群ID"
-    )
-    if not df.empty:
-        df["状態"] = df["_total"].apply(lambda x: "空" if int(x) == 0 else f"{int(x)} 匹")
-        df_view = df[["群ID", "系統", "入力日", "オス", "メス", "不明", "状態"]]
-    else:
-        df_view = df
-    st.dataframe(df_view, use_container_width=True, hide_index=True)
-
-    df_raw = fetch_df("SELECT * FROM individuals ORDER BY individual_id")
-    st.download_button("📥 CSVダウンロード", to_csv_bytes(df_raw), csv_filename("individuals"),
-                       "text/csv", disabled=df_raw.empty, key="dl_individuals")
-
-    # ----------------------------------------------------------------
-    # CSV 一括インポート
-    # ----------------------------------------------------------------
-    with st.expander("[import] 📤 CSV 一括インポート（群をまとめて登録）", expanded=False):
-        st.markdown(
-            "Excel等で群リストを作って一気に登録できます。"
-            "**同じ群IDがあれば上書き、無ければ新規追加**されます。"
-            "登録順は気にせず、欠番のIDを後から入れてもOK（自動で順番に並びます）。"
-        )
-
-        # テンプレート
-        _t = today_jst().strftime("%y%m%d")
-        template_df_ind = pd.DataFrame(
-            [
-                {"individual_id": f"A001{_t}", "lineage": "AB", "birth_date": today_jst().isoformat(),
-                 "male_count": 5, "female_count": 3, "unknown_count": 0},
-                {"individual_id": f"A002{_t}", "lineage": "AB", "birth_date": today_jst().isoformat(),
-                 "male_count": 0, "female_count": 0, "unknown_count": 0},
-                {"individual_id": f"B001{_t}", "lineage": "TU", "birth_date": today_jst().isoformat(),
-                 "male_count": 0, "female_count": 8, "unknown_count": 0},
-            ],
-            columns=["individual_id", "lineage", "birth_date",
-                     "male_count", "female_count", "unknown_count"],
-        )
-        st.download_button(
-            "📄 テンプレートCSVをダウンロード",
-            to_csv_bytes(template_df_ind),
-            "individuals_template.csv",
-            "text/csv",
-            key="dl_ind_template",
-        )
-        st.caption(
-            "必須列：individual_id　／　任意列：lineage, birth_date(YYYY-MM-DD), "
-            "male_count, female_count, unknown_count（未指定は0扱い）"
-        )
-
-        uploaded_ind = st.file_uploader("CSVファイルを選択", type=["csv"], key="csv_ind_upload")
-        if uploaded_ind is not None:
-            try:
-                up = pd.read_csv(uploaded_ind, encoding="utf-8-sig", dtype=str).fillna("")
-            except Exception as e:
-                st.error(f"CSV読み込みエラー：{e}")
-                up = None
-
-            if up is not None:
-                st.success(f"📂 {len(up)} 行を読み込みました")
-                st.dataframe(up.head(20), use_container_width=True, hide_index=True)
-                if len(up) > 20:
-                    st.caption(f"...残り {len(up) - 20} 行はインポート時に処理します")
-
-                errors = []
-                if "individual_id" not in up.columns:
-                    errors.append("必須列 'individual_id' が無いCSVです")
-                else:
-                    bad = []
-                    for i, row in up.iterrows():
-                        rownum = i + 2
-                        iid = str(row["individual_id"]).strip()
-                        if not iid:
-                            bad.append(f"行{rownum}: individual_id が空")
-                            continue
-                        # 数値列の検証
-                        for col in ["male_count", "female_count", "unknown_count"]:
-                            if col in up.columns:
-                                v = str(row[col]).strip()
-                                if v:
-                                    try:
-                                        n = int(float(v))
-                                        if n < 0:
-                                            bad.append(f"行{rownum}: {col}={n} は0以上にしてください")
-                                    except ValueError:
-                                        bad.append(f"行{rownum}: {col}='{v}' が数値ではありません")
-                    if bad:
-                        errors.extend(bad[:20])
-                        if len(bad) > 20:
-                            errors.append(f"...他に {len(bad) - 20} 件のエラー")
-
-                if errors:
-                    st.error("❌ 検証エラーがあります")
-                    for e in errors:
-                        st.write(f"- {e}")
-                else:
-                    st.info(f"✅ 検証OK：{len(up)} 行を登録/更新します")
-                    if st.button("⬆️ インポート実行", type="primary", key="csv_ind_import_btn"):
-                        ok, ng = 0, 0
-                        with get_conn() as conn:
-                            for _, row in up.iterrows():
-                                try:
-                                    iid = str(row["individual_id"]).strip()
-                                    lin = str(row.get("lineage", "")).strip() or None
-                                    bd = str(row.get("birth_date", "")).strip() or None
-                                    mc = int(float(row.get("male_count", "") or 0))
-                                    fc = int(float(row.get("female_count", "") or 0))
-                                    uc = int(float(row.get("unknown_count", "") or 0))
-                                    total_n = mc + fc + uc
-                                    if total_n == 0:
-                                        sex = None
-                                    elif mc > 0 and fc == 0 and uc == 0: sex = "オス"
-                                    elif fc > 0 and mc == 0 and uc == 0: sex = "メス"
-                                    else: sex = "混合"
-                                    conn.execute(
-                                        """INSERT INTO individuals
-                                           (individual_id, birth_date, sex, lineage,
-                                            male_count, female_count, unknown_count)
-                                           VALUES (?, ?, ?, ?, ?, ?, ?)
-                                           ON CONFLICT(individual_id) DO UPDATE SET
-                                             birth_date=excluded.birth_date,
-                                             sex=excluded.sex,
-                                             lineage=excluded.lineage,
-                                             male_count=excluded.male_count,
-                                             female_count=excluded.female_count,
-                                             unknown_count=excluded.unknown_count""",
-                                        (iid, bd, sex, lin, mc, fc, uc),
-                                    )
-                                    ok += 1
-                                except Exception:
-                                    ng += 1
-                            conn.commit()
-                        st.success(f"🎉 {ok} 件を登録/更新しました"
-                                   + (f"（失敗 {ng} 件）" if ng else ""))
-                        st.rerun()
-
-    with st.expander("[delete] 🗑️ 群を削除する"):
-        if not df_raw.empty:
-            del_id = st.selectbox("削除する群ID", df_raw["individual_id"].tolist(), key="del_ind")
-
-            # 参照状況をチェック
-            refs_tanks = fetch_df(
-                "SELECT tank_id FROM tanks WHERE current_individual_id=?", (del_id,)
-            )
-            refs_spawn = fetch_df(
-                "SELECT history_id FROM spawning_records "
-                "WHERE male_parent_id=? OR female_parent_id=?", (del_id, del_id),
-            )
-            refs_trials = fetch_df(
-                "SELECT trial_id FROM mating_trials "
-                "WHERE male_id=? OR female_id=?", (del_id, del_id),
-            )
-
-            if not refs_tanks.empty:
-                st.info(
-                    f"📍 {len(refs_tanks)} 件の水槽に紐づいています "
-                    f"（{', '.join(refs_tanks['tank_id'].astype(str))}）"
-                    "→ 削除時に水槽の「入っている群」を空にします"
-                )
-            if not refs_spawn.empty:
-                st.warning(
-                    f"🥚 {len(refs_spawn)} 件の産卵記録の親情報が消えます"
-                    "（産卵記録自体は残ります）"
-                )
-            if not refs_trials.empty:
-                st.error(
-                    f"⛔ {len(refs_trials)} 件の交配トライアル（過去含む）で使用中です。"
-                    "履歴を残すため削除できません。トライアル側を先に削除してください。"
-                )
-
-            can_delete = refs_trials.empty
-            if st.button("削除", type="primary", key="del_ind_btn", disabled=not can_delete):
-                with get_conn() as conn:
-                    # FK制約を満たすため、先に参照を解除
-                    conn.execute(
-                        "UPDATE tanks SET current_individual_id=NULL "
-                        "WHERE current_individual_id=?", (del_id,)
-                    )
-                    conn.execute(
-                        "UPDATE spawning_records SET male_parent_id=NULL "
-                        "WHERE male_parent_id=?", (del_id,)
-                    )
-                    conn.execute(
-                        "UPDATE spawning_records SET female_parent_id=NULL "
-                        "WHERE female_parent_id=?", (del_id,)
-                    )
-                    conn.execute(
-                        "DELETE FROM individuals WHERE individual_id=?", (del_id,)
-                    )
-                    conn.commit()
-                log_action("群削除", target=del_id)
-                st.success(f"群 {del_id} を削除しました")
-                st.rerun()
-
 
 # ============================================================
 # 🥚 産卵成績（手入力 & 履歴）
 # ============================================================
 with tab_spawn:
     st.header("産卵成績")
-    st.caption("交配トライアル経由で自動登録されるほか、ここから手入力もできます。"
-               "群は水槽に紐づいているので、水槽を選ぶだけで自動取得します。")
+    st.caption("水槽IDをそのまま親として記録します。同じ水槽の中身が変わっても、入居日で世代を区別できます。")
 
-    # 水槽 → 群のマッピング
-    tank_to_group_df = fetch_df(
-        "SELECT t.tank_id, t.current_individual_id, "
-        "       i.lineage, i.male_count, i.female_count, i.unknown_count "
-        "FROM tanks t LEFT JOIN individuals i "
-        "  ON t.current_individual_id = i.individual_id "
-        "ORDER BY t.tank_id"
+    # 水槽情報
+    sp_tanks_df = fetch_df(
+        "SELECT tank_id, lineage, male_count, female_count, unknown_count "
+        "FROM tanks ORDER BY tank_id"
     )
-    sp_tank_ids = tank_to_group_df["tank_id"].tolist()
+    sp_tank_ids = sp_tanks_df["tank_id"].tolist()
 
     def _fmt_tank(tid):
         if not tid:
             return "（未選択）"
-        r = tank_to_group_df[tank_to_group_df["tank_id"] == tid]
+        r = sp_tanks_df[sp_tanks_df["tank_id"] == tid]
         if r.empty:
             return tid
         row = r.iloc[0]
-        gid = row["current_individual_id"]
-        if not gid or pd.isna(gid):
-            return f"{tid}  （群なし）"
         parts = []
         if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
         if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
         if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
         suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
-        return f"{tid}  → {gid}{suffix}"
+        lin = f"  ・{row['lineage']}" if row["lineage"] else ""
+        return f"{tid}{suffix}{lin}"
 
-    # 水槽選択は form の外で（プレビュー即時更新のため）
     st.subheader("手入力で追加")
     sc1, sc2, sc3 = st.columns(3)
     with sc1:
         sdate = st.date_input("産卵日", value=today_jst(), key="sp_date")
     with sc2:
         male_tank = st.selectbox("♂ オス側の水槽", [""] + sp_tank_ids,
-                                  format_func=_fmt_tank, key="sp_male_tank",
-                                  help="この水槽の群がオス親として記録されます")
+                                  format_func=_fmt_tank, key="sp_male_tank")
     with sc3:
         female_tank = st.selectbox("♀ メス側の水槽", [""] + sp_tank_ids,
                                     format_func=_fmt_tank, key="sp_female_tank")
-
-    # 自動取得された群ID
-    male_gid, female_gid = None, None
-    if male_tank:
-        r = tank_to_group_df[tank_to_group_df["tank_id"] == male_tank]
-        if not r.empty:
-            v = r.iloc[0]["current_individual_id"]
-            male_gid = v if pd.notna(v) and v else None
-    if female_tank:
-        r = tank_to_group_df[tank_to_group_df["tank_id"] == female_tank]
-        if not r.empty:
-            v = r.iloc[0]["current_individual_id"]
-            female_gid = v if pd.notna(v) and v else None
-
-    st.markdown(
-        "<div style='margin:6px 0 14px 0;padding:10px 14px;"
-        "background:rgba(255,255,255,0.6);border:1px solid #E5E5EA;"
-        "border-radius:12px;font-size:14px;color:#1D1D1F'>"
-        f"親群（自動取得）：♂ <b>{male_gid or '—'}</b>　×　♀ <b>{female_gid or '—'}</b>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
 
     with st.form("spawn_form", clear_on_submit=False):
         fc1, fc2 = st.columns(2)
@@ -2568,11 +2232,10 @@ with tab_spawn:
                     """INSERT INTO spawning_records
                        (spawning_date, male_parent_id, female_parent_id, egg_count, fertilization_rate)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (sdate.isoformat(), male_gid, female_gid, int(eggs), float(rate)),
+                    (sdate.isoformat(), male_tank, female_tank, int(eggs), float(rate)),
                 )
                 log_action("産卵成績(手入力)",
-                           details=f"♂{male_tank}({male_gid or '群なし'}) × "
-                                   f"♀{female_tank}({female_gid or '群なし'}) / "
+                           details=f"♂{male_tank} × ♀{female_tank} / "
                                    f"卵{int(eggs)} / 受精率{rate}%")
                 st.success("産卵成績を登録しました")
 
