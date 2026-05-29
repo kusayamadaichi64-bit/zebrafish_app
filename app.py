@@ -1745,18 +1745,28 @@ with tab_trial:
         lin = f"  ・{row['lineage']}" if row["lineage"] else ""
         return f"{tid}{suffix}{lin}"
 
-    def cascading_tank_picker(prefix, label, filter_df, filter_label):
+    def cascading_tank_picker(prefix, label, filter_df, filter_label, fixed_rack=None):
         """ラック・段・列の3分割ドロップダウンで水槽を選択する。
-           form の外に置く前提（即時フィードバックのため）。
-           戻り値: 選択された tank_id（未選択 or 不一致なら ""）。"""
-        st.markdown(f"**{label}**")
-        cp1, cp2, cp3, cp4 = st.columns([1, 1, 1, 3])
-        r = cp1.selectbox("ラック", [""] + RACKS, key=f"{prefix}_r",
-                           label_visibility="collapsed")
-        t = cp2.selectbox("段", [""] + TIERS, key=f"{prefix}_t",
-                           label_visibility="collapsed")
-        cstr = cp3.selectbox("列", [""] + [f"{c:02d}" for c in COLS],
-                              key=f"{prefix}_c", label_visibility="collapsed")
+           fixed_rack を渡すと段＋列のみ（ラックは固定）。"""
+        if label:
+            st.markdown(f"**{label}**")
+        if fixed_rack:
+            cp1, cp2, cp3 = st.columns([1, 1, 4])
+            r = fixed_rack
+            t = cp1.selectbox("段", [""] + TIERS, key=f"{prefix}_t",
+                               label_visibility="collapsed")
+            cstr = cp2.selectbox("列", [""] + [f"{c:02d}" for c in COLS],
+                                  key=f"{prefix}_c", label_visibility="collapsed")
+            feedback = cp3
+        else:
+            cp1, cp2, cp3, cp4 = st.columns([1, 1, 1, 3])
+            r = cp1.selectbox("ラック", [""] + RACKS, key=f"{prefix}_r",
+                               label_visibility="collapsed")
+            t = cp2.selectbox("段", [""] + TIERS, key=f"{prefix}_t",
+                               label_visibility="collapsed")
+            cstr = cp3.selectbox("列", [""] + [f"{c:02d}" for c in COLS],
+                                  key=f"{prefix}_c", label_visibility="collapsed")
+            feedback = cp4
         chosen = ""
         if r and t and cstr:
             chosen = format_location(r, t, int(cstr))
@@ -1768,14 +1778,14 @@ with tab_trial:
                 if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
                 suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
                 lin = f"  ・{row['lineage']}" if row.get("lineage") else ""
-                cp4.markdown(
+                feedback.markdown(
                     f"<div style='padding:6px 12px;background:rgba(168,221,182,0.20);"
                     f"border-radius:10px;font-size:13px;color:#1D1D1F'>"
                     f"✅ <b>{chosen}</b>{suffix}{lin}</div>",
                     unsafe_allow_html=True,
                 )
             else:
-                cp4.markdown(
+                feedback.markdown(
                     f"<div style='padding:6px 12px;background:rgba(232,180,168,0.30);"
                     f"border-radius:10px;font-size:13px;color:#8B3A2A'>"
                     f"⚠️ <b>{chosen}</b> — {filter_label}</div>",
@@ -1784,51 +1794,105 @@ with tab_trial:
                 chosen = ""
         return chosen
 
-    # --- 新規計画 ---
-    with st.expander("[new] ➕ 新規トライアルを計画する", expanded=False):
-        # === 水槽選択（3分割ドロップダウン、form の外で即時反映） ===
-        st.caption("ラック → 段 → 列 の順でカチカチっと選んでください")
-        src_m = cascading_tank_picker("tr_src_m", "♂ オス側の元水槽（戻し先）",
-                                       male_tank_df, "ここには ♂ がいません")
-        src_f = cascading_tank_picker("tr_src_f", "♀ メス側の元水槽（戻し先）",
-                                       female_tank_df, "ここには ♀ がいません")
-        breed = cascading_tank_picker("tr_breed", "交配用水槽（空のタンクのみ）",
-                                       empty_tank_df, "ここは空ではありません")
+    # --- 新規計画（複数ペア一括登録対応）---
+    with st.expander("[new] ➕ 新規トライアルを計画する（一括登録対応）", expanded=False):
+        # === ステップ① 対象ラック ===
+        st.markdown("##### ① 対象ラック")
+        bulk_rack = st.selectbox(
+            "このラック内で交配ペアを組みます", RACKS, key="bulk_rack",
+            help="wild × wild、genom × genom のように同ラック内でしか交配しない前提で固定します",
+        )
 
-        # === タグ・日付・メモ（form 内、送信時にまとめて処理） ===
-        with st.form("new_trial"):
-            fc1, fc2 = st.columns(2)
-            with fc1:
-                planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1),
-                                          key="tr_planned")
-            with fc2:
-                tc1, tc2 = st.columns(2)
-                male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01",
-                                            key="tr_mtag")
-                female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01",
-                                              key="tr_ftag")
-            notes = st.text_area("メモ", key="tr_notes")
-            ok = st.form_submit_button("計画を登録", type="primary")
-            if ok:
-                new_tid = execute(
-                    """INSERT INTO mating_trials
-                       (planned_date, male_id, female_id, source_tank_male, source_tank_female,
-                        breeding_tank_id, notes, male_tag, female_tag)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (planned.isoformat(), None, None, src_m or None, src_f or None,
-                     breed or None, notes, male_tag or None, female_tag or None),
+        # ラック内に絞ったフィルタDF
+        _rack_prefix = f"{bulk_rack}-"
+        male_in_rack   = male_tank_df[male_tank_df["tank_id"].str.startswith(_rack_prefix)]
+        female_in_rack = female_tank_df[female_tank_df["tank_id"].str.startswith(_rack_prefix)]
+        empty_in_rack  = empty_tank_df[empty_tank_df["tank_id"].str.startswith(_rack_prefix)]
+        st.caption(
+            f"ラック **{bulk_rack}** に "
+            f"♂候補 {len(male_in_rack)} ／ ♀候補 {len(female_in_rack)} ／ 空槽 {len(empty_in_rack)} 件"
+        )
+
+        if "trial_pair_count" not in st.session_state:
+            st.session_state.trial_pair_count = 1
+
+        st.markdown("##### ② ペアを選択")
+        st.caption("段 → 列の順でクリック。複数登録なら下の「ペアを追加」を押してください。")
+
+        pair_data = []
+        for i in range(st.session_state.trial_pair_count):
+            st.markdown(f"**▸ ペア {i+1}**")
+            src_m = cascading_tank_picker(
+                f"trp{i}_sm", "♂ オス側の元水槽（戻し先）", male_in_rack,
+                "ここには ♂ がいません", fixed_rack=bulk_rack,
+            )
+            src_f = cascading_tank_picker(
+                f"trp{i}_sf", "♀ メス側の元水槽（戻し先）", female_in_rack,
+                "ここには ♀ がいません", fixed_rack=bulk_rack,
+            )
+            breed = cascading_tank_picker(
+                f"trp{i}_br", "交配槽（空のみ）", empty_in_rack,
+                "ここは空ではありません", fixed_rack=bulk_rack,
+            )
+            ttc1, ttc2 = st.columns(2)
+            m_tag = ttc1.text_input(f"♂ タグ", key=f"trp{i}_mtag",
+                                      placeholder="任意 例: M-01")
+            f_tag = ttc2.text_input(f"♀ タグ", key=f"trp{i}_ftag",
+                                      placeholder="任意 例: F-01")
+            pair_data.append((src_m, src_f, breed, m_tag, f_tag))
+            if i < st.session_state.trial_pair_count - 1:
+                st.markdown("<hr style='margin:8px 0;opacity:0.3'/>", unsafe_allow_html=True)
+
+        # ペア操作ボタン
+        opc1, opc2 = st.columns(2)
+        if opc1.button("➕ ペアを追加", key="add_pair_btn", use_container_width=True):
+            st.session_state.trial_pair_count += 1
+            st.rerun()
+        if st.session_state.trial_pair_count > 1:
+            if opc2.button("➖ 最後のペアを削除", key="rm_pair_btn",
+                            use_container_width=True):
+                st.session_state.trial_pair_count -= 1
+                st.rerun()
+
+        st.markdown("##### ③ 共通設定")
+        cs1, cs2 = st.columns(2)
+        with cs1:
+            planned = st.date_input("採卵予定日（全ペア共通）",
+                                     value=today_jst() + timedelta(days=1),
+                                     key="bulk_planned")
+        with cs2:
+            notes = st.text_input("メモ（全ペア共通・任意）", key="bulk_notes")
+
+        if st.button("📝 計画を一括登録", type="primary", key="bulk_submit",
+                     use_container_width=True):
+            valid_pairs = [p for p in pair_data if p[0] and p[1]]
+            if not valid_pairs:
+                st.error("有効なペアが1組もありません。♂ と ♀ の水槽を両方選んでください。")
+            else:
+                tids = []
+                for src_m, src_f, breed, m_tag, f_tag in valid_pairs:
+                    new_tid = execute(
+                        """INSERT INTO mating_trials
+                           (planned_date, male_id, female_id, source_tank_male,
+                            source_tank_female, breeding_tank_id, notes,
+                            male_tag, female_tag)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (planned.isoformat(), None, None, src_m, src_f,
+                         breed or None, notes or None,
+                         m_tag or None, f_tag or None),
+                    )
+                    tids.append(new_tid)
+                    log_action(
+                        "トライアル計画", target=f"#{new_tid}",
+                        details=f"♂{src_m} × ♀{src_f}"
+                                + (f" / 交配槽{breed}" if breed else "")
+                                + f" / 予定{planned.isoformat()}",
+                    )
+                st.success(
+                    f"🎉 {len(tids)} 件のトライアルを一括登録しました "
+                    f"（#{', #'.join(str(t) for t in tids)}）"
                 )
-                log_detail_parts = []
-                if src_m or src_f:
-                    log_detail_parts.append(f"戻し♂{src_m or '-'}/♀{src_f or '-'}")
-                if breed:
-                    log_detail_parts.append(f"交配槽{breed}")
-                if male_tag or female_tag:
-                    log_detail_parts.append(f"タグ♂{male_tag or '-'}/♀{female_tag or '-'}")
-                log_detail_parts.append(f"予定{planned.isoformat()}")
-                log_action("トライアル計画", target=f"#{new_tid}",
-                           details=" / ".join(log_detail_parts))
-                st.success("計画を登録しました")
+                st.session_state.trial_pair_count = 1
                 st.rerun()
 
     st.divider()
