@@ -208,9 +208,7 @@ def init_db():
                 male_parent_id      TEXT,
                 female_parent_id    TEXT,
                 egg_count           INTEGER,
-                fertilization_rate  REAL,
-                FOREIGN KEY (male_parent_id)   REFERENCES individuals(individual_id),
-                FOREIGN KEY (female_parent_id) REFERENCES individuals(individual_id)
+                fertilization_rate  REAL
             )
         """)
         c.execute("""
@@ -320,6 +318,36 @@ def init_db():
             )
         """)
         conn.commit()
+
+    # マイグレーション: spawning_records から individuals への FK を撤廃
+    # （新モデルでは parent_id に tank_id を入れるため）
+    sp_mig_conn = sqlite3.connect(DB_PATH)
+    try:
+        sp_mig_conn.execute("PRAGMA foreign_keys = OFF")
+        fks = sp_mig_conn.execute("PRAGMA foreign_key_list(spawning_records)").fetchall()
+        if fks:
+            sp_mig_conn.execute("""
+                CREATE TABLE spawning_records_new (
+                    history_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spawning_date       TEXT,
+                    male_parent_id      TEXT,
+                    female_parent_id    TEXT,
+                    egg_count           INTEGER,
+                    fertilization_rate  REAL
+                )
+            """)
+            sp_mig_conn.execute(
+                "INSERT INTO spawning_records_new "
+                "(history_id, spawning_date, male_parent_id, female_parent_id, "
+                " egg_count, fertilization_rate) "
+                "SELECT history_id, spawning_date, male_parent_id, female_parent_id, "
+                "       egg_count, fertilization_rate FROM spawning_records"
+            )
+            sp_mig_conn.execute("DROP TABLE spawning_records")
+            sp_mig_conn.execute("ALTER TABLE spawning_records_new RENAME TO spawning_records")
+            sp_mig_conn.commit()
+    finally:
+        sp_mig_conn.close()
 
     # 群IDマイグレーション: 既存の9桁数字IDに 'A' プレフィックスを付ける
     # （A段の登録分という前提。新ID形式は <段文字>NNNYYMMDD = 10文字）
