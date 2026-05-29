@@ -1713,35 +1713,69 @@ with tab_trial:
         lin = f"  ・{row['lineage']}" if row["lineage"] else ""
         return f"{tid}{suffix}{lin}"
 
+    def cascading_tank_picker(prefix, label, filter_df, filter_label):
+        """ラック・段・列の3分割ドロップダウンで水槽を選択する。
+           form の外に置く前提（即時フィードバックのため）。
+           戻り値: 選択された tank_id（未選択 or 不一致なら ""）。"""
+        st.markdown(f"**{label}**")
+        cp1, cp2, cp3, cp4 = st.columns([1, 1, 1, 3])
+        r = cp1.selectbox("ラック", [""] + RACKS, key=f"{prefix}_r",
+                           label_visibility="collapsed")
+        t = cp2.selectbox("段", [""] + TIERS, key=f"{prefix}_t",
+                           label_visibility="collapsed")
+        cstr = cp3.selectbox("列", [""] + [f"{c:02d}" for c in COLS],
+                              key=f"{prefix}_c", label_visibility="collapsed")
+        chosen = ""
+        if r and t and cstr:
+            chosen = format_location(r, t, int(cstr))
+            if chosen in filter_df["tank_id"].values:
+                row = filter_df[filter_df["tank_id"] == chosen].iloc[0]
+                parts = []
+                if int(row["male_count"] or 0) > 0:    parts.append(f"♂{int(row['male_count'])}")
+                if int(row["female_count"] or 0) > 0:  parts.append(f"♀{int(row['female_count'])}")
+                if int(row["unknown_count"] or 0) > 0: parts.append(f"？{int(row['unknown_count'])}")
+                suffix = f"  ({' / '.join(parts)})" if parts else "  (空)"
+                lin = f"  ・{row['lineage']}" if row.get("lineage") else ""
+                cp4.markdown(
+                    f"<div style='padding:6px 12px;background:rgba(168,221,182,0.20);"
+                    f"border-radius:10px;font-size:13px;color:#1D1D1F'>"
+                    f"✅ <b>{chosen}</b>{suffix}{lin}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                cp4.markdown(
+                    f"<div style='padding:6px 12px;background:rgba(232,180,168,0.30);"
+                    f"border-radius:10px;font-size:13px;color:#8B3A2A'>"
+                    f"⚠️ <b>{chosen}</b> — {filter_label}</div>",
+                    unsafe_allow_html=True,
+                )
+                chosen = ""
+        return chosen
+
     # --- 新規計画 ---
     with st.expander("[new] ➕ 新規トライアルを計画する", expanded=False):
-        with st.form("new_trial"):
-            c1, c2 = st.columns(2)
-            with c1:
-                planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1))
-                src_m = st.selectbox(
-                    "♂ オス側の元水槽（戻し先）", [""] + male_tank_ids,
-                    format_func=lambda t: _fmt_tk(male_tank_df, t),
-                    help="♂ または ? がいる水槽だけ表示されます",
-                )
-                src_f = st.selectbox(
-                    "♀ メス側の元水槽（戻し先）", [""] + female_tank_ids,
-                    format_func=lambda t: _fmt_tk(female_tank_df, t),
-                    help="♀ または ? がいる水槽だけ表示されます",
-                )
-            with c2:
-                breed = st.selectbox(
-                    "交配用水槽（空のタンクのみ）", [""] + empty_tank_ids,
-                    format_func=lambda t: _fmt_tk(empty_tank_df, t) if t else "（未選択）",
-                    help="現在空の水槽だけ表示されます",
-                )
-                if not empty_tank_ids:
-                    st.caption("⚠️ 空の水槽がありません。水槽管理から空きを作ってください。")
-                tc1, tc2 = st.columns(2)
-                male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01")
-                female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01")
+        # === 水槽選択（3分割ドロップダウン、form の外で即時反映） ===
+        st.caption("ラック → 段 → 列 の順でカチカチっと選んでください")
+        src_m = cascading_tank_picker("tr_src_m", "♂ オス側の元水槽（戻し先）",
+                                       male_tank_df, "ここには ♂ がいません")
+        src_f = cascading_tank_picker("tr_src_f", "♀ メス側の元水槽（戻し先）",
+                                       female_tank_df, "ここには ♀ がいません")
+        breed = cascading_tank_picker("tr_breed", "交配用水槽（空のタンクのみ）",
+                                       empty_tank_df, "ここは空ではありません")
 
-            notes = st.text_area("メモ")
+        # === タグ・日付・メモ（form 内、送信時にまとめて処理） ===
+        with st.form("new_trial"):
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                planned = st.date_input("採卵予定日", value=today_jst() + timedelta(days=1),
+                                          key="tr_planned")
+            with fc2:
+                tc1, tc2 = st.columns(2)
+                male_tag = tc1.text_input("♂ 個別タグ（任意）", placeholder="例: M-01",
+                                            key="tr_mtag")
+                female_tag = tc2.text_input("♀ 個別タグ（任意）", placeholder="例: F-01",
+                                              key="tr_ftag")
+            notes = st.text_area("メモ", key="tr_notes")
             ok = st.form_submit_button("計画を登録", type="primary")
             if ok:
                 new_tid = execute(
