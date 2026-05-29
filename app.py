@@ -86,16 +86,20 @@ def render_rack_html(rack_name, df_sub):
             if tank is None:
                 bg, label, tip = EMPTY_COLOR, "—", "未登録"
             else:
-                bg = HEALTH_COLOR.get(tank.health_status, "#E8DDC8")
-                tid = str(tank.tank_id)
-                label = tid if len(tid) <= 6 else tid[:5] + "…"
                 m = int(getattr(tank, "male_count", 0) or 0)
                 f = int(getattr(tank, "female_count", 0) or 0)
                 u = int(getattr(tank, "unknown_count", 0) or 0)
                 tot = m + f + u
-                count_part = "空" if tot == 0 else f"♂{m}/♀{f}/?{u}"
+                tid = str(tank.tank_id)
+                label = tid if len(tid) <= 6 else tid[:5] + "…"
                 lin = getattr(tank, "lineage", None) or "-"
-                tip = f"ID:{tid} / 状態:{tank.health_status or '-'} / {count_part} / 系統:{lin}"
+                if tot == 0:
+                    bg = EMPTY_COLOR
+                    tip = f"ID:{tid} / 空 / 系統:{lin}"
+                else:
+                    bg = HEALTH_COLOR.get(tank.health_status, "#E8DDC8")
+                    tip = (f"ID:{tid} / 状態:{tank.health_status or '-'} / "
+                           f"♂{m}/♀{f}/?{u} / 系統:{lin}")
             parts.append(
                 f'<td title="{tip}" style="background:{bg};padding:8px 4px;'
                 f'text-align:center;border-radius:6px;color:#3C3530;'
@@ -174,6 +178,15 @@ def init_db():
         ]:
             if col_def[0] not in tank_cols:
                 c.execute(f"ALTER TABLE tanks ADD COLUMN {col_def[0]} {col_def[1]}")
+
+        # 健康状態クリーンアップ: 空タンク（合計0匹）の health_status を NULL に
+        # （空のタンクで「良好」が記録されていた誤データを毎起動時に正規化）
+        c.execute("""
+            UPDATE tanks SET health_status = NULL
+            WHERE COALESCE(male_count,0) + COALESCE(female_count,0)
+                + COALESCE(unknown_count,0) = 0
+              AND health_status IS NOT NULL
+        """)
 
         # マイグレーション: 既存の current_individual_id から count/lineage を tanks にコピー
         # （1回だけ。tanks の count が全部 0 のときに発火）
@@ -1452,6 +1465,7 @@ with tab_dash:
                     return f"♂{m} / ♀{f} / ？{u}"
                 d = d.copy()
                 d["匹数"] = d.apply(_fmt, axis=1)
+                d["lineage"] = d["lineage"].fillna("—")
                 return d[["tank_id", "匹数", "lineage", "memo"]].rename(
                     columns={"tank_id": "水槽ID", "lineage": "系統", "memo": "メモ"})
 
@@ -1990,7 +2004,8 @@ with tab_tank:
         c1, c2 = st.columns(2)
         with c1:
             lineage = st.text_input("系統名（例: AB, TU, WIK）", key="tk_lineage")
-            health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health")
+            health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health",
+                                  help="魚がいない（合計0匹）の場合は記録されません")
         with c2:
             st.markdown("**匹数（性別ごと）**")
             mc1, mc2, mc3 = st.columns(3)
@@ -2010,6 +2025,8 @@ with tab_tank:
             else:
                 set_date_v = (now_iso() if not _tank_exists
                               else (_existing_row["set_date"] or now_iso()))
+                # 空タンクは健康状態を持たない
+                health_v = health if tk_total > 0 else None
                 execute(
                     """INSERT INTO tanks (tank_id, rack, tier, col_no, health_status, memo,
                                           male_count, female_count, unknown_count, lineage, set_date)
@@ -2019,11 +2036,12 @@ with tab_tank:
                          health_status=excluded.health_status, memo=excluded.memo,
                          male_count=excluded.male_count, female_count=excluded.female_count,
                          unknown_count=excluded.unknown_count, lineage=excluded.lineage""",
-                    (tank_id_auto, rack, tier_str, int(col_str), health, memo,
+                    (tank_id_auto, rack, tier_str, int(col_str), health_v, memo,
                      int(tk_m), int(tk_f), int(tk_u), lineage or None, set_date_v),
                 )
                 log_action("水槽登録/更新", target=tank_id_auto,
-                           details=f"♂{int(tk_m)} / ♀{int(tk_f)} / ?{int(tk_u)} / {health}")
+                           details=f"♂{int(tk_m)} / ♀{int(tk_f)} / ?{int(tk_u)}"
+                                   + (f" / {health_v}" if health_v else " / 空"))
                 st.success(f"水槽 {tank_id_auto}（{tk_label}）を登録/更新しました")
                 st.rerun()
 
@@ -2105,9 +2123,12 @@ with tab_tank:
             view = view[view["health_status"].isin(f_health)]
 
         st.caption(f"表示中: {len(view)} / 全 {len(df)} 水槽")
+        view_out = view[["tank_id", "場所", "匹数", "lineage", "health_status",
+                         "set_date", "memo"]].copy()
+        # 空タンクは健康状態を「—」表示
+        view_out["health_status"] = view_out["health_status"].fillna("—")
         st.dataframe(
-            view[["tank_id", "場所", "匹数", "lineage", "health_status",
-                  "set_date", "memo"]].rename(
+            view_out.rename(
                 columns={"tank_id": "水槽ID", "lineage": "系統",
                          "health_status": "健康状態", "set_date": "入居日",
                          "memo": "メモ"}
@@ -2233,12 +2254,16 @@ with tab_tank:
                                     rack_v = str(row.get("rack", "")).strip() or None
                                     tier_v = str(row.get("tier", "")).strip() or None
                                     col_v = int(float(row["col_no"])) if str(row.get("col_no", "")).strip() else None
-                                    hs_v = str(row.get("health_status", "")).strip() or "良好"
                                     memo_v = str(row.get("memo", "")).strip() or None
                                     lin_v = str(row.get("lineage", "")).strip() or None
                                     mc = int(float(row.get("male_count", "") or 0))
                                     fc = int(float(row.get("female_count", "") or 0))
                                     uc = int(float(row.get("unknown_count", "") or 0))
+                                    # 空タンク（合計0）は health を NULL に、それ以外は CSV 指定 or 良好
+                                    if mc + fc + uc == 0:
+                                        hs_v = None
+                                    else:
+                                        hs_v = str(row.get("health_status", "")).strip() or "良好"
                                     conn.execute(
                                         """INSERT INTO tanks
                                            (tank_id, rack, tier, col_no, health_status, memo,
