@@ -55,7 +55,6 @@ def format_location(rack, tier, col_no):
 
 HEALTH_COLOR = {
     "良好":   "#B8DDB6",
-    "要観察": "#F5D7A1",
     "隔離中": "#E8B4A8",
 }
 EMPTY_COLOR = "#F5F2EC"
@@ -156,7 +155,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS tanks (
                 tank_id               TEXT PRIMARY KEY,
                 current_individual_id TEXT,
-                health_status         TEXT CHECK(health_status IN ('良好','要観察','隔離中')),
+                health_status         TEXT CHECK(health_status IN ('良好','隔離中')),
                 memo                  TEXT,
                 rack                  TEXT,
                 tier                  INTEGER,
@@ -190,6 +189,8 @@ def init_db():
                 + COALESCE(unknown_count,0) = 0
               AND health_status IS NOT NULL
         """)
+        # 「要観察」廃止: 既存レコードは「良好」に統一
+        c.execute("UPDATE tanks SET health_status='良好' WHERE health_status='要観察'")
 
         # マイグレーション: 既存の current_individual_id から count/lineage を tanks にコピー
         # （1回だけ。tanks の count が全部 0 のときに発火）
@@ -1524,8 +1525,8 @@ with tab_dash:
     col1.metric("🪣 水槽数", len(df_tanks))
     col2.metric("🐠 総匹数", total_fish)
     col3.metric("🥚 産卵記録", len(df_spawn))
-    alert_count = int((df_tanks["health_status"] == "要観察").sum()) if not df_tanks.empty else 0
-    col4.metric("⚠️ 要観察", alert_count)
+    alert_count = int((df_tanks["health_status"] == "隔離中").sum()) if not df_tanks.empty else 0
+    col4.metric("🚨 隔離中", alert_count)
     in_progress = int(df_trials["status"].isin(["計画中", "前日セット済み", "採卵済み"]).sum()) if not df_trials.empty else 0
     col5.metric("💕 進行中トライアル", in_progress)
 
@@ -1555,9 +1556,8 @@ with tab_dash:
         if df_tanks.empty:
             st.info("水槽が登録されていません")
         else:
-            alert_df = df_tanks[df_tanks["health_status"] == "要観察"]
             isolated_df = df_tanks[df_tanks["health_status"] == "隔離中"]
-            if alert_df.empty and isolated_df.empty:
+            if isolated_df.empty:
                 st.success("すべての水槽が良好です 🎉")
             def _alert_view(d):
                 def _fmt(r):
@@ -1573,13 +1573,9 @@ with tab_dash:
                 return d[["tank_id", "匹数", "lineage", "memo"]].rename(
                     columns={"tank_id": "水槽ID", "lineage": "系統", "memo": "メモ"})
 
-            if not alert_df.empty:
-                has_alerts = True
-                st.warning("【要観察】")
-                st.dataframe(_alert_view(alert_df), use_container_width=True, hide_index=True)
             if not isolated_df.empty:
                 has_alerts = True
-                st.error("【隔離中】")
+                st.error("🚨 隔離中の水槽")
                 st.dataframe(_alert_view(isolated_df), use_container_width=True, hide_index=True)
         if has_alerts and st.button("🪣 水槽管理タブで対応", key="nav_tank",
                                      use_container_width=True):
@@ -2123,9 +2119,8 @@ with tab_rack:
     legend = (
         '<div style="display:flex;gap:14px;align-items:center;margin:8px 0 16px 0;font-size:13px">'
         f'<span style="background:{HEALTH_COLOR["良好"]};padding:3px 12px;border-radius:6px">良好</span>'
-        f'<span style="background:{HEALTH_COLOR["要観察"]};padding:3px 12px;border-radius:6px">要観察</span>'
         f'<span style="background:{HEALTH_COLOR["隔離中"]};padding:3px 12px;border-radius:6px">隔離中</span>'
-        f'<span style="background:{EMPTY_COLOR};padding:3px 12px;border-radius:6px;color:#888">未登録</span>'
+        f'<span style="background:{EMPTY_COLOR};padding:3px 12px;border-radius:6px;color:#888">空 / 未登録</span>'
         '</div>'
     )
     st.markdown(legend, unsafe_allow_html=True)
@@ -2136,8 +2131,8 @@ with tab_rack:
     sc1, sc2, sc3, sc4 = st.columns(4)
     sc1.metric("登録済み水槽", len(df_all))
     sc2.metric("良好", int((df_all["health_status"] == "良好").sum()) if not df_all.empty else 0)
-    sc3.metric("要観察", int((df_all["health_status"] == "要観察").sum()) if not df_all.empty else 0)
-    sc4.metric("隔離中", int((df_all["health_status"] == "隔離中").sum()) if not df_all.empty else 0)
+    sc3.metric("隔離中", int((df_all["health_status"] == "隔離中").sum()) if not df_all.empty else 0)
+    sc4.metric("空", int(((df_all[["male_count","female_count","unknown_count"]].fillna(0).sum(axis=1)) == 0).sum()) if not df_all.empty else 0)
 
     st.divider()
 
@@ -2206,7 +2201,7 @@ with tab_tank:
         c1, c2 = st.columns(2)
         with c1:
             lineage = st.text_input("系統名（例: AB, TU, WIK）", key="tk_lineage")
-            health = st.selectbox("健康状態", ["良好", "要観察", "隔離中"], key="tk_health",
+            health = st.selectbox("健康状態", ["良好", "隔離中"], key="tk_health",
                                   help="魚がいない（合計0匹）の場合は記録されません")
         with c2:
             st.markdown("**匹数（性別ごと）**")
@@ -2314,7 +2309,7 @@ with tab_tank:
         fc1, fc2, fc3 = st.columns(3)
         f_rack = fc1.multiselect("ラックで絞り込み", RACKS, default=[])
         f_tier = fc2.multiselect("段で絞り込み", TIERS, default=[])
-        f_health = fc3.multiselect("健康状態で絞り込み", ["良好", "要観察", "隔離中"], default=[])
+        f_health = fc3.multiselect("健康状態で絞り込み", ["良好", "隔離中"], default=[])
 
         view = df.copy()
         if f_rack:
@@ -2428,8 +2423,8 @@ with tab_tank:
                                 bad_rows.append(f"行{rownum}: col_no='{row['col_no']}' が数値ではありません")
                         if "health_status" in up_df.columns:
                             hs = str(row["health_status"]).strip()
-                            if hs and hs not in ["良好", "要観察", "隔離中"]:
-                                bad_rows.append(f"行{rownum}: health_status='{hs}' は [良好/要観察/隔離中]")
+                            if hs and hs not in ["良好", "隔離中"]:
+                                bad_rows.append(f"行{rownum}: health_status='{hs}' は [良好/隔離中]")
 
                     if bad_rows:
                         errors.extend(bad_rows[:20])
